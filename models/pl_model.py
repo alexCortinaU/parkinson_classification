@@ -12,45 +12,62 @@ import torchio as tio
 import pytorch_lightning as pl
 import numpy as np
 import yaml
+import kornia.losses as losses
+from models.medicalnet.model import generate_model
+from models.medicalnet.setting import get_def_args
 
 def get_criterions(name: str):
     if name == 'cross_entropy':
         return nn.CrossEntropyLoss()
     # elif name == 'dice':
     #     return losses.DiceLoss()
-    # elif name == 'focal':
-    #     return losses.FocalLoss(0.5)
-    # elif name == 'tversky':
-    #     return losses.TverskyLoss(0.4, 0.4)
+    elif name == 'focal':
+        return losses.FocalLoss(0.5)
+    elif name == 'tversky':
+        return losses.TverskyLoss(0.4, 0.4)
     else:
         raise ValueError(f'Unknown loss name: {name}')
 
 def get_optimizer(name: str):
     if name == 'adam':
         return optim.Adam
-    # elif name == 'dice':
-    #     return losses.DiceLoss()
-    # elif name == 'focal':
-    #     return losses.FocalLoss(0.5)
-    # elif name == 'tversky':
-    #     return losses.TverskyLoss(0.4, 0.4)
+    if name == 'sgd':
+        return optim.SGD
     else:
         raise ValueError(f'Unknown loss name: {name}')
 
-def get_monai_net(name: str):
+def get_monai_net(name: str, in_channels: int = 1, n_classes: int = 2):
     if name == 'densenet':
-        return monai.networks.nets.DenseNet121(spatial_dims=3, in_channels=1, out_channels=2)
+        return monai.networks.nets.DenseNet121(spatial_dims=3, 
+                                                in_channels=in_channels, 
+                                                out_channels=n_classes)
     elif name == 'efficient':
-        return monai.networks.nets.EfficientNetBN('efficientnet-b0', spatial_dims=3, in_channels=1, num_classes=2)
+        return monai.networks.nets.EfficientNetBN('efficientnet-b0', 
+                                                    spatial_dims=3, 
+                                                    in_channels=in_channels, 
+                                                    num_classes=n_classes)
     elif name == 'resnet':
         return monai.networks.nets.ResNet(block='bottleneck', 
-                                            layers=[3, 4, 6, 3], spatial_dims=3, n_input_channels=1, num_classes=2)
+                                            layers=[3, 4, 6, 3], 
+                                            spatial_dims=3, 
+                                            n_input_channels=in_channels, 
+                                            num_classes=n_classes)
+def get_3dresnet(n_classes: int = 2):
+    args = get_def_args()
+    model, _ = generate_model(args) 
+    model.conv_seg = nn.Sequential(
+                                nn.AdaptiveMaxPool3d(output_size=(1, 1, 1)),
+                                nn.Flatten(start_dim=1),
+                                nn.Dropout(0.1),
+                                # the last Conv3d layer has out_channels = 512
+                                nn.Linear(512, n_classes)
+                                )
+    return model
 
 class Model(pl.LightningModule):
-    def __init__(self, net, loss, learning_rate, optimizer_class):
+    def __init__(self, net, loss, learning_rate, optimizer_class, n_classes, in_channels):
         super().__init__()
         self.lr = learning_rate
-        self.net = get_monai_net(net)
         self.criterion = get_criterions(loss)
         self.optimizer_class = get_optimizer(optimizer_class)
         self.train_acc = torchmetrics.Accuracy(task='binary')
@@ -59,7 +76,12 @@ class Model(pl.LightningModule):
         self.val_auroc = torchmetrics.AUROC(task='binary')
         self.train_f1 = torchmetrics.F1Score(task='binary', num_classes=2)
         self.val_f1 = torchmetrics.F1Score(task='binary', num_classes=2)
-
+        if net == '3dresnet':
+            self.net = get_3dresnet(n_classes)
+            print('Pretrained 3D resnet has a single input channel')
+        else:
+            self.net = get_monai_net(net, in_channels, n_classes)
+            
     def configure_optimizers(self):
         optimizer = self.optimizer_class(self.parameters(), lr=self.lr)
         sch = ReduceLROnPlateau(optimizer, 'min',

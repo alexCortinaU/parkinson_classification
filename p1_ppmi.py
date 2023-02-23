@@ -18,7 +18,7 @@ import numpy as np
 from pytorch_lightning.loggers import TensorBoardLogger, CSVLogger
 import yaml
 from dataset.ppmi_dataset import PPMIDataModule
-from models.monai_model import Model
+from models.pl_model import Model
 
 def main():
     # read the config file
@@ -34,13 +34,29 @@ def main():
     md_df_first = md_df.loc[~first_acq_idx, :]
 
     # create PPMI dataset
-    data = PPMIDataModule(md_df=md_df_first, root_dir=root_dir, **cfg['dataset'])
+    augmentations = tio.Compose([
+                                        tio.RandomAffine(translation=10),
+                                        tio.RandomElasticDeformation(p=0.1, num_control_points=7, max_displacement=10),
+                                        tio.RandomGamma(p=0.5),
+                                        tio.RandomNoise(p=0.5, mean=0.5, std=0.05), # p=0.5
+                                        tio.RandomMotion(p=0.1), #, degrees=20, translation=20),
+                                        tio.RandomBiasField(p=0.25),
+                                        ])
+    
+    # save augmentations to config file                                   
+    cfg['aug'] = str(augmentations)
+
+    data = PPMIDataModule(md_df=md_df_first, 
+                            root_dir=root_dir, 
+                            augment=augmentations, 
+                            **cfg['dataset'])
     data.prepare_data()
     data.setup()
     print("Training:  ", len(data.train_set))
     print("Validation: ", len(data.val_set))
     print("Test:      ", len(data.test_set))
 
+    # create model
     model = Model(**cfg['model'])
 
     # create callbacks

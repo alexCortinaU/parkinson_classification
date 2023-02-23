@@ -29,7 +29,7 @@ class PPMIDataModule(pl.LightningDataModule):
                 reshape_size = (128, 128, 128), 
                 val_test_split = 0.4, 
                 random_state = 42,
-                agument = None):
+                augment = None):
         super().__init__()
         self.md_df = md_df
         self.train_batch_size = train_batch_size
@@ -40,7 +40,7 @@ class PPMIDataModule(pl.LightningDataModule):
         self.reshape_size = reshape_size
         self.val_test_split = val_test_split
         self.random_state = random_state
-        self.agument = agument
+        self.augment = augment
         self.subjects = None
         self.test_subjects = None
         self.preprocess = None
@@ -125,7 +125,7 @@ class PPMIDataModule(pl.LightningDataModule):
     def get_augmentation_transform(self):
 
         # If no augmentation is specified, use the default one
-        if self.agument == None:
+        if self.augment == None:
             self.augment = tio.Compose([
                                         tio.RandomAffine(),
                                         tio.RandomGamma(p=0.5),

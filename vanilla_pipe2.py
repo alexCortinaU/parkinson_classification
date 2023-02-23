@@ -197,7 +197,13 @@ def get_monai_net(name: str):
     if name == 'densenet':
         return monai.networks.nets.DenseNet121(spatial_dims=3, in_channels=1, out_channels=2)
     elif name == 'efficient':
-        return monai.networks.nets.EfficientNetBN('efficientnet-b0', spatial_dims=3, in_channels=1, num_classes=2)
+        return monai.networks.nets.EfficientNetBN(
+                                                'efficientnet-b0', 
+                                                spatial_dims=3, 
+                                                in_channels=1, 
+                                                num_classes=2,
+                                                pretrained=True
+                                                )
     elif name == 'resnet':
         return monai.networks.nets.ResNet(block='basic', spatial_dims=3, n_input_channels=1, num_classes=2)
 
@@ -282,7 +288,7 @@ def main():
     print("Test:      ", len(data.test_set))
 
     # create model
-    densenet = monai.networks.nets.DenseNet121(spatial_dims=3, in_channels=1, out_channels=2)
+    # densenet = monai.networks.nets.DenseNet121(spatial_dims=3, in_channels=1, out_channels=2)
 
     model = Model(**cfg['model'])
 
@@ -292,9 +298,9 @@ def main():
                                           mode="max",
                                           filename="{epoch:02d}-{val_acc:.4f}")
 
-    early_stopping = pl.callbacks.early_stopping.EarlyStopping(monitor="val_loss", 
-                                                                mode='min', patience=15,
-                                                                )
+    # early_stopping = pl.callbacks.early_stopping.EarlyStopping(monitor="val_loss", 
+    #                                                             mode='min', patience=15,
+    #                                                             )
 
     lr_monitor = pl.callbacks.LearningRateMonitor(logging_interval='epoch')
 
@@ -320,7 +326,7 @@ def main():
 
     # create trainer
     trainer = pl.Trainer(**cfg['pl_trainer'],
-                        callbacks=[checkpoint_callback, early_stopping, lr_monitor],
+                        callbacks=[checkpoint_callback, lr_monitor], # early_stopping
                         logger=[tb_logger, csv_logger],
                         )
 

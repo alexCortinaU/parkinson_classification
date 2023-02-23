@@ -1,0 +1,26 @@
+pl_trainer:
+  max_epochs: 50
+  devices:
+  - 0
+  accelerator: gpu
+  precision: 16
+  log_every_n_steps: 10
+
+# should match arguments in the BrainPatchesDataModule class
+dataset:
+  train_num_workers: 2
+  train_batch_size: 5
+  val_num_workers: 2
+  val_batch_size: 5
+  reshape_size: 200
+
+# should match arguments in the module class
+model:
+  net: 3dresnet # monai: densenet, efficient (for b7), resnet
+  n_classes: 2
+  in_channels: 1
+  loss: cross_entropy # dice, cross_entropy, focal, tversky
+  optimizer_class: adam
+  learning_rate: 0.001
+
+exp_name: 3dresnet-da02_lrsch_baseline
