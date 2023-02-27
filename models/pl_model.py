@@ -21,8 +21,10 @@ def get_criterions(name: str):
         return nn.CrossEntropyLoss()
     # elif name == 'dice':
     #     return losses.DiceLoss()
+    elif name == 'bin_cross_entropy':
+        return nn.BCEWithLogitsLoss()
     elif name == 'focal':
-        return losses.FocalLoss(0.5)
+        return losses.BinaryFocalLossWithLogits(0.5)
     elif name == 'tversky':
         return losses.TverskyLoss(0.4, 0.4)
     else:
@@ -40,18 +42,21 @@ def get_monai_net(name: str, in_channels: int = 1, n_classes: int = 2):
     if name == 'densenet':
         return monai.networks.nets.DenseNet121(spatial_dims=3, 
                                                 in_channels=in_channels, 
-                                                out_channels=n_classes)
+                                                out_channels=n_classes,
+                                                pretrained=True)
     elif name == 'efficient':
         return monai.networks.nets.EfficientNetBN('efficientnet-b0', 
                                                     spatial_dims=3, 
                                                     in_channels=in_channels, 
-                                                    num_classes=n_classes)
+                                                    num_classes=n_classes,
+                                                    pretrained=True)
     elif name == 'resnet':
         return monai.networks.nets.ResNet(block='bottleneck', 
                                             layers=[3, 4, 6, 3], 
                                             spatial_dims=3, 
                                             n_input_channels=in_channels, 
-                                            num_classes=n_classes)
+                                            num_classes=n_classes,
+                                            pretrained=True)
 def get_3dresnet(n_classes: int = 2):
     args = get_def_args()
     model, _ = generate_model(args) 
@@ -64,18 +69,31 @@ def get_3dresnet(n_classes: int = 2):
                                 )
     return model
 
+
 class Model(pl.LightningModule):
-    def __init__(self, net, loss, learning_rate, optimizer_class, n_classes, in_channels):
+    def __init__(self, 
+                    net, 
+                    loss, 
+                    learning_rate, 
+                    optimizer_class, 
+                    n_classes = 2, 
+                    in_channels = 1, 
+                    sch_patience = 15, 
+                    weight_decay = 0.0001,
+                    momentum = 0):
         super().__init__()
         self.lr = learning_rate
         self.criterion = get_criterions(loss)
         self.optimizer_class = get_optimizer(optimizer_class)
-        self.train_acc = torchmetrics.Accuracy(task='binary')
-        self.val_acc = torchmetrics.Accuracy(task='binary')
+        self.sch_patience = sch_patience
+        self.weight_decay = weight_decay
+        self.momentum = momentum
+        self.train_acc = torchmetrics.Accuracy(task='binary', validate_args=True)
+        self.val_acc = torchmetrics.Accuracy(task='binary', validate_args=True)
         self.train_auroc = torchmetrics.AUROC(task='binary')
         self.val_auroc = torchmetrics.AUROC(task='binary')
-        self.train_f1 = torchmetrics.F1Score(task='binary', num_classes=2)
-        self.val_f1 = torchmetrics.F1Score(task='binary', num_classes=2)
+        self.train_f1 = torchmetrics.F1Score(task='binary', num_classes=2, average='macro')
+        self.val_f1 = torchmetrics.F1Score(task='binary', num_classes=2, average='macro')
         if net == '3dresnet':
             self.net = get_3dresnet(n_classes)
             print('Pretrained 3D resnet has a single input channel')
@@ -83,9 +101,12 @@ class Model(pl.LightningModule):
             self.net = get_monai_net(net, in_channels, n_classes)
             
     def configure_optimizers(self):
-        optimizer = self.optimizer_class(self.parameters(), lr=self.lr)
+        if self.optimizer_class == optim.Adam:
+            optimizer = self.optimizer_class(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
+        else:
+            optimizer = self.optimizer_class(self.parameters(), lr=self.lr, momentum=self.momentum, weight_decay=self.weight_decay)
         sch = ReduceLROnPlateau(optimizer, 'min',
-                                factor=0.1, patience=10)
+                                factor=0.1, patience=self.sch_patience)
          #learning rate scheduler
         return {"optimizer": optimizer,
                 "lr_scheduler": {"scheduler": sch,
@@ -102,7 +123,7 @@ class Model(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         y_hat, y = self.infer_batch(batch)
         batch_size = len(y)
-        loss = self.criterion(y_hat, y)
+        loss = self.criterion(y_hat, y).mean()
         self.log("train_loss", loss, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
         self.train_acc(y_hat, y)
         self.train_auroc(y_hat, y)
@@ -116,7 +137,7 @@ class Model(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         y_hat, y = self.infer_batch(batch)
         batch_size = len(y)
-        loss = self.criterion(y_hat, y)
+        loss = self.criterion(y_hat, y).mean()
         self.log("val_loss", loss, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
         self.val_acc(y_hat, y)
         self.val_auroc(y_hat, y)
@@ -126,3 +147,12 @@ class Model(pl.LightningModule):
         self.log("val_f1", self.val_f1, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
 
         return loss
+    
+    def forward(self, x):
+        x, _ = self.prepare_batch(x)
+        return self.net(x)
+    
+    # def predict_step(self, batch, batch_idx, dataloader_idx=0):
+    #     # this calls forward
+    #     y_hat, y = self.infer_batch(batch)
+    #     return self(batch)

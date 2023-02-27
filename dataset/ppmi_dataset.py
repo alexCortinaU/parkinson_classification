@@ -29,7 +29,8 @@ class PPMIDataModule(pl.LightningDataModule):
                 reshape_size = (128, 128, 128), 
                 val_test_split = 0.4, 
                 random_state = 42,
-                augment = None):
+                augment = None,
+                shuffle = True):
         super().__init__()
         self.md_df = md_df
         self.train_batch_size = train_batch_size
@@ -41,6 +42,7 @@ class PPMIDataModule(pl.LightningDataModule):
         self.val_test_split = val_test_split
         self.random_state = random_state
         self.augment = augment
+        self.shuffle = shuffle
         self.subjects = None
         self.test_subjects = None
         self.preprocess = None
@@ -68,7 +70,9 @@ class PPMIDataModule(pl.LightningDataModule):
                 subj_dir = [f for f in f.iterdir()][0]
             subjects_list.append(str(subj_dir))
             if subj['Group'] == 'PD':
-                subjects_labels.append(1)
+                subjects_labels.append(1) 
+                # changed from 1 to 0
+                # when 3dresnet-da00_lrsch_focal_sgd0.01_m0.9_rs42_changedlabels
             else:
                 subjects_labels.append(0)
 
@@ -115,7 +119,7 @@ class PPMIDataModule(pl.LightningDataModule):
         preprocess = tio.Compose(
             [
                 tio.RescaleIntensity((-1, 1)),
-                tio.CropOrPad(self.reshape_size),
+                tio.CropOrPad(self.reshape_size, padding_mode=0),
                 # tio.EnsureShapeMultiple(8),  # for the U-Net
                 # tio.OneHot(),
             ]
@@ -146,17 +150,32 @@ class PPMIDataModule(pl.LightningDataModule):
         # Assign train/val datasets for use in dataloaders
         self.preprocess = self.get_preprocessing_transform()
         self.get_augmentation_transform()
-        self.transform = tio.Compose([self.preprocess, self.augment])
+        self.transform = tio.Compose([self.preprocess]) #, self.augment])
 
         self.train_set = tio.SubjectsDataset(self.train_subjects, transform=self.transform)
         self.val_set = tio.SubjectsDataset(self.val_subjects, transform=self.preprocess)
         self.test_set = tio.SubjectsDataset(self.test_subjects, transform=self.preprocess)
 
     def train_dataloader(self):
-        return DataLoader(self.train_set, self.train_batch_size, num_workers=self.train_num_workers)
+        return DataLoader(self.train_set, 
+                            self.train_batch_size, 
+                            num_workers=self.train_num_workers,
+                            shuffle=self.shuffle)
 
     def val_dataloader(self):
-        return DataLoader(self.val_set, self.val_batch_size, num_workers=self.val_num_workers)
+        return DataLoader(self.val_set, 
+                            self.val_batch_size, 
+                            num_workers=self.val_num_workers,
+                            shuffle=False)
 
     def test_dataloader(self):
-        return DataLoader(self.test_set, self.val_batch_size, num_workers=self.val_num_workers)
+        return DataLoader(self.test_set, 
+                            self.val_batch_size, 
+                            num_workers=self.val_num_workers,
+                            shuffle=False)
+
+    def predict_dataloader(self):
+        return DataLoader(self.val_set, 
+                            self.val_batch_size, 
+                            num_workers=self.val_num_workers,
+                            shuffle=False)

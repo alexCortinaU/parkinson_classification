@@ -1,6 +1,7 @@
 # own
 outputs/
 models/medicalnet/pretrain/
+lightning_logs/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

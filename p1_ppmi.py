@@ -35,12 +35,13 @@ def main():
 
     # create PPMI dataset
     augmentations = tio.Compose([
-                                        tio.RandomAffine(translation=10),
-                                        tio.RandomElasticDeformation(p=0.1, num_control_points=7, max_displacement=10),
-                                        tio.RandomGamma(p=0.5),
-                                        tio.RandomNoise(p=0.5, mean=0.5, std=0.05), # p=0.5
-                                        tio.RandomMotion(p=0.1), #, degrees=20, translation=20),
-                                        tio.RandomBiasField(p=0.25),
+                                        
+                                        # tio.RandomAffine(translation=10),
+                                        # tio.RandomElasticDeformation(p=0.1, num_control_points=7, max_displacement=10),
+                                        # tio.RandomGamma(p=0.5),
+                                        # tio.RandomNoise(p=0.5, mean=0.5, std=0.05), # p=0.5
+                                        # tio.RandomMotion(p=0.1), #, degrees=20, translation=20),
+                                        # tio.RandomBiasField(p=0.25),
                                         ])
     
     # save augmentations to config file                                   
@@ -61,13 +62,13 @@ def main():
 
     # create callbacks
     checkpoint_callback = pl.callbacks.ModelCheckpoint(save_top_k=5,
-                                          monitor="val_acc",
+                                          monitor="val_f1",
                                           mode="max",
                                           filename="{epoch:02d}-{val_acc:.4f}")
 
-    early_stopping = pl.callbacks.early_stopping.EarlyStopping(monitor="val_loss", 
-                                                                mode='min', patience=15,
-                                                                )
+    # early_stopping = pl.callbacks.early_stopping.EarlyStopping(monitor="val_loss", 
+    #                                                             mode='min', patience=15,
+    #                                                             )
 
     lr_monitor = pl.callbacks.LearningRateMonitor(logging_interval='epoch')
 
@@ -93,7 +94,7 @@ def main():
 
     # create trainer
     trainer = pl.Trainer(**cfg['pl_trainer'],
-                        callbacks=[checkpoint_callback, early_stopping, lr_monitor],
+                        callbacks=[checkpoint_callback, lr_monitor], # early_stopping
                         logger=[tb_logger, csv_logger],
                         )
 
