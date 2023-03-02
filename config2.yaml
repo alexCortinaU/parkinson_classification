@@ -5,9 +5,11 @@ pl_trainer:
   accelerator: gpu
   precision: 16
   log_every_n_steps: 10
-  # no earlystopper
 
-# should match arguments in the BrainPatchesDataModule class
+training:
+  early_stopping:  False
+  monitor_ckpt: val_f1 # val_acc, val_f1, val_auroc
+
 dataset:
   train_num_workers: 2
   train_batch_size: 5
@@ -15,15 +17,17 @@ dataset:
   val_batch_size: 5
   reshape_size: 200
   random_state: 42
+  weighted_sampler: True
 
 # should match arguments in the module class
 model:
-  net: 3dresnet # monai: densenet, efficient (for b7), resnet
+  net: 3dresnet # monai: densenet, efficient (for b7), resnet. 3dresnet (pretrained)
   n_classes: 2
   in_channels: 1
   loss: focal # dice, cross_entropy, bin_cross_entropy, focal, tversky
   optimizer_class: sgd
   learning_rate: 0.01
   sch_patience: 10
+  momentum: 0      
 
-exp_name: 3dresnet-da00_lrsch_focal_sgd0.01_m0.9_rs42_changedlabels
+exp_name: 3dresnet-da01_bz10_focal_sampler

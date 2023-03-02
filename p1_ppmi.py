@@ -36,7 +36,11 @@ def main():
     # create PPMI dataset
     augmentations = tio.Compose([
                                         
-                                        # tio.RandomAffine(translation=10),
+                                        tio.RandomAffine(scales=(0.1, 0.1, 0.1), 
+                                                        degrees=(10, 0, 10),
+                                                        # isotropic=True,
+                                                        # center='image',
+                                                        default_pad_value=0)
                                         # tio.RandomElasticDeformation(p=0.1, num_control_points=7, max_displacement=10),
                                         # tio.RandomGamma(p=0.5),
                                         # tio.RandomNoise(p=0.5, mean=0.5, std=0.05), # p=0.5
@@ -53,32 +57,41 @@ def main():
                             **cfg['dataset'])
     data.prepare_data()
     data.setup()
-    print("Training:  ", len(data.train_set))
-    print("Validation: ", len(data.val_set))
-    print("Test:      ", len(data.test_set))
+    # print("Training:  ", len(data.train_set))
+    # print("Validation: ", len(data.val_set))
+    # print("Test:      ", len(data.test_set))
 
     # create model
     model = Model(**cfg['model'])
+    print(f"--- \n --- {cfg['exp_name']}")
 
     # create callbacks
     checkpoint_callback = pl.callbacks.ModelCheckpoint(save_top_k=5,
-                                          monitor="val_f1",
+                                          monitor=cfg['training']['monitor_ckpt'],
                                           mode="max",
-                                          filename="{epoch:02d}-{val_acc:.4f}")
-
-    # early_stopping = pl.callbacks.early_stopping.EarlyStopping(monitor="val_loss", 
-    #                                                             mode='min', patience=15,
-    #                                                             )
+                                          filename="{epoch:02d}-{val_f1:.4f}")
 
     lr_monitor = pl.callbacks.LearningRateMonitor(logging_interval='epoch')
 
+    if cfg['training']['early_stopping']:
+        early_stopping = pl.callbacks.early_stopping.EarlyStopping(monitor="val_loss", 
+                                                                mode='min', patience=15,
+                                                                )
+        callbacks = [checkpoint_callback, lr_monitor, early_stopping]
+    else:
+        print("---- \n ----- Early stopping is disabled \n ----")
+        callbacks = [checkpoint_callback, lr_monitor]
+    
+
+
+
     # create loggers
-    tb_logger = TensorBoardLogger(save_dir=Path('./outputs'),
+    tb_logger = TensorBoardLogger(save_dir=Path('./p1_ppmi_outs'),
                                name=cfg['exp_name'],
                                version=0
                                )
     
-    csv_logger = CSVLogger(save_dir=Path('./outputs'),
+    csv_logger = CSVLogger(save_dir=Path('./p1_ppmi_outs'),
                             flush_logs_every_n_steps=10,
                             name=cfg['exp_name'],
                             version=0
@@ -86,7 +99,7 @@ def main():
                             
     # save the config file to the output folder
     # for a given experiment
-    dump_path = Path('./outputs').resolve() / f'{cfg["exp_name"]}'
+    dump_path = Path('./p1_ppmi_outs').resolve() / f'{cfg["exp_name"]}'
     dump_path.mkdir(parents=True, exist_ok=True)
     dump_path = dump_path/'config_dump.yml'
     with open(dump_path, 'w') as f:
@@ -94,7 +107,7 @@ def main():
 
     # create trainer
     trainer = pl.Trainer(**cfg['pl_trainer'],
-                        callbacks=[checkpoint_callback, lr_monitor], # early_stopping
+                        callbacks=callbacks,
                         logger=[tb_logger, csv_logger],
                         )
 

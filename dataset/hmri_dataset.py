@@ -19,7 +19,7 @@ import numpy as np
 from pytorch_lightning.loggers import TensorBoardLogger, CSVLogger
 import yaml
 
-class PPMIDataModule(pl.LightningDataModule):
+class HMRIDataModule(pl.LightningDataModule):
     def __init__(self, 
                 md_df, 
                 root_dir,
@@ -58,36 +58,26 @@ class PPMIDataModule(pl.LightningDataModule):
         subjects_list = []
         subjects_labels = []
         for i in range(len(md_df)):
-            subj = md_df.iloc[i]
-            if 'w/' in subj['Description']:
-                subj_desc = subj['Description'].replace('w/', 'w_').replace(' ', '_')
-            else:
-                subj_desc = subj['Description'].replace(' ', '_')
-                
-            subj_dir = self.root_dir / str(subj['Subject']) / subj_desc
-            for f in subj_dir.iterdir():
-                if str(subj['Acq Date'].date()) in f.name:
-                    subj_dir = f
-                    break
-            for f in subj_dir.iterdir(): 
-                subj_dir = [f for f in f.iterdir()][0]
-            subjects_list.append(str(subj_dir))
-            if subj['Group'] == 'PD':
-                subjects_labels.append(1) 
-                # changed from 1 to 0
-                # when 3dresnet-da00_lrsch_focal_sgd0.01_m0.9_rs42_changedlabels
-            else:
-                subjects_labels.append(0)
+            subj_dir = self.root_dir / md_df.iloc[i, 0] / 'Results'
+            hmri_files = sorted(list(subj_dir.glob('*.nii')), key=lambda x: x.stem)
+            subjects_list.append(hmri_files)
+            subjects_labels.append(md_df.iloc[i, -1])
 
         return subjects_list, subjects_labels
 
     def prepare_data(self):
 
         # split ratio train = 0.6, val = 0.2, test = 0.2
+
+        # drop subject 058 because it doesn't have maps
+        self.md_df.drop(self.md_df[self.md_df.id == 'sub-058'].index, inplace=True)
+        self.md_df.reset_index(drop=True, inplace=True)
+        print('Drop subject 058 because it doesn\'t have maps')
+
         md_df_train_, self.md_df_test = train_test_split(self.md_df, test_size=self.test_split, 
-                                                            random_state=42, stratify=self.md_df.loc[:, 'Group'].values)
+                                                            random_state=42, stratify=self.md_df.loc[:, 'group'].values)
         self.md_df_train, self.md_df_val = train_test_split(md_df_train_, test_size=0.25,
-                                                random_state=self.random_state, stratify=md_df_train_.loc[:, 'Group'].values)
+                                                random_state=self.random_state, stratify=md_df_train_.loc[:, 'group'].values)
                                                 
         image_training_paths, labels_train = self.get_subjects_list(self.md_df_train)
         image_val_paths, labels_val = self.get_subjects_list(self.md_df_val)
@@ -163,11 +153,11 @@ class PPMIDataModule(pl.LightningDataModule):
     def train_dataloader(self):
 
         if self.weighted_sampler:
-            targets = self.md_df_train['Group'].values
+            targets = self.md_df_train['group'].values
             class_sample_count = np.array(
                 [len(np.where(targets == t)[0]) for t in np.unique(targets)])
             weight = 1. / class_sample_count
-            samples_weight = np.array([weight[0] if t == 'Control' else weight[1] for t in targets])
+            samples_weight = np.array([weight[t] for t in targets])
             samples_weight = torch.from_numpy(samples_weight)
             samples_weight = samples_weight.double()
             sampler = WeightedRandomSampler(samples_weight, len(samples_weight))

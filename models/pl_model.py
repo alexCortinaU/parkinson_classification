@@ -105,12 +105,16 @@ class Model(pl.LightningModule):
             optimizer = self.optimizer_class(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
         else:
             optimizer = self.optimizer_class(self.parameters(), lr=self.lr, momentum=self.momentum, weight_decay=self.weight_decay)
-        sch = ReduceLROnPlateau(optimizer, 'min',
-                                factor=0.1, patience=self.sch_patience)
-         #learning rate scheduler
-        return {"optimizer": optimizer,
-                "lr_scheduler": {"scheduler": sch,
-                                 "monitor":"val_loss"}}
+        
+        if self.sch_patience > 0:
+            sch = ReduceLROnPlateau(optimizer, 'min',
+                                    factor=0.1, patience=self.sch_patience)
+            #learning rate scheduler
+            return {"optimizer": optimizer,
+                    "lr_scheduler": {"scheduler": sch,
+                                    "monitor":"val_loss"}}
+        else:
+            return optimizer
 
     def prepare_batch(self, batch):
         return batch["image"][tio.DATA], batch["label"]
@@ -128,7 +132,7 @@ class Model(pl.LightningModule):
         self.train_acc(y_hat, y)
         self.train_auroc(y_hat, y)
         self.train_f1(y_hat, y)
-        self.log("train_acc", self.train_acc, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
+        self.log("train_acc", self.train_acc, on_step=False, on_epoch=True ,prog_bar=False, logger=True, batch_size=batch_size)
         self.log("train_auroc", self.train_auroc, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
         self.log("train_f1", self.train_f1, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
            
@@ -142,7 +146,7 @@ class Model(pl.LightningModule):
         self.val_acc(y_hat, y)
         self.val_auroc(y_hat, y)
         self.val_f1(y_hat, y)
-        self.log("val_acc", self.val_acc, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
+        self.log("val_acc", self.val_acc, on_step=False, on_epoch=True ,prog_bar=False, logger=True, batch_size=batch_size)
         self.log("val_auroc", self.val_auroc, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
         self.log("val_f1", self.val_f1, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
 

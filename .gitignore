@@ -2,6 +2,7 @@
 outputs/
 models/medicalnet/pretrain/
 lightning_logs/
+p1_ppmi_outs/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
