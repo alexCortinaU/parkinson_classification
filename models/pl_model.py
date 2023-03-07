@@ -15,6 +15,7 @@ import yaml
 import kornia.losses as losses
 from models.medicalnet.model import generate_model
 from models.medicalnet.setting import get_def_args
+# from utils.utils import get_pretrained_model
 
 def get_criterions(name: str):
     if name == 'cross_entropy':
@@ -68,14 +69,13 @@ def get_3dresnet(n_classes: int = 2):
                                 nn.Linear(512, n_classes)
                                 )
     return model
-
-
 class Model(pl.LightningModule):
     def __init__(self, 
                     net, 
                     loss, 
                     learning_rate, 
-                    optimizer_class, 
+                    optimizer_class,
+                    chkpt_path=None, 
                     n_classes = 2, 
                     in_channels = 1, 
                     sch_patience = 15, 
@@ -85,6 +85,7 @@ class Model(pl.LightningModule):
         self.lr = learning_rate
         self.criterion = get_criterions(loss)
         self.optimizer_class = get_optimizer(optimizer_class)
+        self.chkpt_path = chkpt_path
         self.sch_patience = sch_patience
         self.weight_decay = weight_decay
         self.momentum = momentum
@@ -94,17 +95,27 @@ class Model(pl.LightningModule):
         self.val_auroc = torchmetrics.AUROC(task='binary')
         self.train_f1 = torchmetrics.F1Score(task='binary', num_classes=2, average='macro')
         self.val_f1 = torchmetrics.F1Score(task='binary', num_classes=2, average='macro')
-        if net == '3dresnet':
-            self.net = get_3dresnet(n_classes)
-            print('Pretrained 3D resnet has a single input channel')
-        else:
-            self.net = get_monai_net(net, in_channels, n_classes)
+
+        # create network
+        if not isinstance(net, str):
+            self.net = net
+        else:   
+            if net == '3dresnet':
+                self.net = get_3dresnet(n_classes)
+                # print('Pretrained 3D resnet has a single input channel')
+            else:
+                self.net = get_monai_net(net, in_channels, n_classes)
             
     def configure_optimizers(self):
         if self.optimizer_class == optim.Adam:
-            optimizer = self.optimizer_class(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
+            optimizer = self.optimizer_class(self.parameters(), 
+                                             lr=self.lr, 
+                                             weight_decay=self.weight_decay)
         else:
-            optimizer = self.optimizer_class(self.parameters(), lr=self.lr, momentum=self.momentum, weight_decay=self.weight_decay)
+            optimizer = self.optimizer_class(self.parameters(), 
+                                             lr=self.lr, 
+                                             momentum=self.momentum, 
+                                             weight_decay=self.weight_decay)
         
         if self.sch_patience > 0:
             sch = ReduceLROnPlateau(optimizer, 'min',

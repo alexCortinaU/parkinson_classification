@@ -7,8 +7,6 @@ from sklearn.model_selection import train_test_split
 from torch import optim, nn, utils, Tensor, as_tensor
 from torch.utils.data import random_split, DataLoader, WeightedRandomSampler
 
-import monai
-import torchmetrics
 import torch
 import pandas as pd
 import torchio as tio
@@ -30,6 +28,7 @@ class HMRIDataModule(pl.LightningDataModule):
                 reshape_size = (128, 128, 128), 
                 test_split = 0.2, 
                 random_state = 42,
+                windowed_dataset = False,
                 weighted_sampler = False,
                 augment = None,
                 shuffle = True):
@@ -43,6 +42,7 @@ class HMRIDataModule(pl.LightningDataModule):
         self.reshape_size = reshape_size
         self.test_split = test_split
         self.random_state = random_state
+        self.windowed_dataset = windowed_dataset
         self.weighted_sampler = weighted_sampler
         self.augment = augment
         self.shuffle = shuffle
@@ -59,7 +59,11 @@ class HMRIDataModule(pl.LightningDataModule):
         subjects_labels = []
         for i in range(len(md_df)):
             subj_dir = self.root_dir / md_df.iloc[i, 0] / 'Results'
-            hmri_files = sorted(list(subj_dir.glob('*.nii')), key=lambda x: x.stem)
+            if self.windowed_dataset:
+                hmri_files = sorted(list(subj_dir.glob('*_w.nii')), key=lambda x: x.stem)
+            else:
+                hmri_files = sorted(list(subj_dir.glob('*.nii')), key=lambda x: x.stem)
+                hmri_files = [file for file in hmri_files if '_w' not in file.stem]
             subjects_list.append(hmri_files)
             subjects_labels.append(md_df.iloc[i, -1])
 
@@ -70,9 +74,10 @@ class HMRIDataModule(pl.LightningDataModule):
         # split ratio train = 0.6, val = 0.2, test = 0.2
 
         # drop subject 058 because it doesn't have maps
-        self.md_df.drop(self.md_df[self.md_df.id == 'sub-058'].index, inplace=True)
+        for drop_id in ['sub-058']: # 'sub-016'
+            self.md_df.drop(self.md_df[self.md_df.id == drop_id].index, inplace=True)
         self.md_df.reset_index(drop=True, inplace=True)
-        print('Drop subject 058 because it doesn\'t have maps')
+        print(f'Drop subjects 058, 016')
 
         md_df_train_, self.md_df_test = train_test_split(self.md_df, test_size=self.test_split, 
                                                             random_state=42, stratify=self.md_df.loc[:, 'group'].values)
@@ -113,9 +118,7 @@ class HMRIDataModule(pl.LightningDataModule):
             [   tio.ToCanonical(),
                 tio.RescaleIntensity((0, 1)),
                 tio.CropOrPad(self.reshape_size, 
-                              padding_mode='minimum'),
-                # tio.EnsureShapeMultiple(8),  # for the U-Net
-                # tio.OneHot(),
+                              padding_mode='minimum')
             ]
         )
         return preprocess
@@ -131,13 +134,6 @@ class HMRIDataModule(pl.LightningDataModule):
                                         tio.RandomMotion(p=0.1),
                                         tio.RandomBiasField(p=0.25),
                                         ])
-                            # Compose(
-                            # [RandAffine(prob=0.5,
-                            #             translate_range=(5, 5, 5),
-                            #             rotate_range=(np.pi * 4, np.pi * 4, np.pi *4 ),
-                            #             scale_range=(0.15, 0.15, 0.15),
-                            #             padding_mode='zeros')
-                            # ])
 
     def setup(self, stage=None):
         
