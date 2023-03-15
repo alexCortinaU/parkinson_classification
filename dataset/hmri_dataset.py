@@ -29,6 +29,7 @@ class HMRIDataModule(pl.LightningDataModule):
                 test_split = 0.2, 
                 random_state = 42,
                 windowed_dataset = False,
+                brain_masked = False,
                 weighted_sampler = False,
                 augment = None,
                 shuffle = True):
@@ -43,6 +44,7 @@ class HMRIDataModule(pl.LightningDataModule):
         self.test_split = test_split
         self.random_state = random_state
         self.windowed_dataset = windowed_dataset
+        self.brain_masked = brain_masked
         self.weighted_sampler = weighted_sampler
         self.augment = augment
         self.shuffle = shuffle
@@ -60,7 +62,10 @@ class HMRIDataModule(pl.LightningDataModule):
         for i in range(len(md_df)):
             subj_dir = self.root_dir / md_df.iloc[i, 0] / 'Results'
             if self.windowed_dataset:
-                hmri_files = sorted(list(subj_dir.glob('*_w.nii')), key=lambda x: x.stem)
+                if self.brain_masked:
+                    hmri_files = sorted(list(subj_dir.glob('*w_masked.nii')), key=lambda x: x.stem)
+                else:
+                    hmri_files = sorted(list(subj_dir.glob('*_w.nii')), key=lambda x: x.stem)
             else:
                 hmri_files = sorted(list(subj_dir.glob('*.nii')), key=lambda x: x.stem)
                 hmri_files = [file for file in hmri_files if '_w' not in file.stem]
@@ -74,10 +79,13 @@ class HMRIDataModule(pl.LightningDataModule):
         # split ratio train = 0.6, val = 0.2, test = 0.2
 
         # drop subject 058 because it doesn't have maps
-        for drop_id in ['sub-058']: # 'sub-016'
+        subjs_to_drop = ['sub-058', 'sub-016']
+        if self.brain_masked:
+            subjs_to_drop.append('sub-025')
+        for drop_id in subjs_to_drop: # 'sub-016'
             self.md_df.drop(self.md_df[self.md_df.id == drop_id].index, inplace=True)
         self.md_df.reset_index(drop=True, inplace=True)
-        print(f'Drop subjects 058, 016')
+        print(f'Drop subjects {subjs_to_drop}')
 
         md_df_train_, self.md_df_test = train_test_split(self.md_df, test_size=self.test_split, 
                                                             random_state=42, stratify=self.md_df.loc[:, 'group'].values)

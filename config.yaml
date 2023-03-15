@@ -1,5 +1,5 @@
 pl_trainer:
-  max_epochs: 80
+  max_epochs: 100
   devices:
   - 0
   accelerator: gpu
@@ -8,28 +8,30 @@ pl_trainer:
 
 training:
   early_stopping:  False
-  monitor_ckpt: val_f1 # val_acc, val_f1, val_auroc
+  monitor_ckpt: val_auroc # val_acc, val_f1, val_auroc
 
 dataset:
   train_num_workers: 2
-  train_batch_size: 1
+  train_batch_size: 3
   val_num_workers: 2
-  val_batch_size: 1
-  reshape_size: 200
+  val_batch_size: 3
+  reshape_size: 180
   random_state: 42
   weighted_sampler: False
   windowed_dataset: True
+  brain_masked: True
+  shuffle: True
 
 # should match arguments in the module class
 model:
   chkpt_path: /home/alejandrocu/Documents/parkinson_classification/p1_ppmi_outs/3dresnet-da01_bz10_focal_sampler/version_0/checkpoints/epoch=01-val_f1=0.7708.ckpt 
   n_classes: 2
   in_channels: 4
-  loss: bin_cross_entropy # dice, cross_entropy, bin_cross_entropy, focal, tversky
-  optimizer_class: sgd # sgd, adam
+  loss: focal # dice, cross_entropy, bin_cross_entropy, focal, tversky
+  optimizer_class: adam # sgd, adam, rmsprop
   learning_rate: 0.001
-  sch_patience: 15
+  sch_patience: 30
   momentum: 0 # 0.9  
   weight_decay: 0 # 0.0001    
 
-exp_name: hmri3dresnet-da01_bz1_BCE_sgd_lr0.001_windowed_r42
+exp_name: brainhmri3dresnet-da02_bz3_focal_adam_lr0.001-v3

@@ -44,7 +44,7 @@ def main():
                                                 # center='image',
                                                 default_pad_value=0),
                                 # # tio.RandomElasticDeformation(p=0.1, num_control_points=7, max_displacement=10),
-                                # tio.RandomGamma(p=0.5),
+                                tio.RandomGamma(p=0.5),
                                 # # tio.RandomNoise(p=0.5, mean=0.5, std=0.05), # p=0.5
                                 # # tio.RandomMotion(p=0.1), #, degrees=20, translation=20),
                                 # # tio.RandomBiasField(p=0.25),
@@ -74,7 +74,7 @@ def main():
     checkpoint_callback = pl.callbacks.ModelCheckpoint(save_top_k=5,
                                           monitor=cfg['training']['monitor_ckpt'],
                                           mode="max",
-                                          filename="{epoch:02d}-{val_f1:.4f}")
+                                          filename="{epoch:02d}-{val_auroc:.4f}")
 
     lr_monitor = pl.callbacks.LearningRateMonitor(logging_interval='epoch')
 

@@ -14,14 +14,27 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
 import yaml
+import nibabel as nib
+import SimpleITK as sitk
+import cc3d
 
 from dataset.ppmi_dataset import PPMIDataModule
 from dataset.hmri_dataset import HMRIDataModule
 from models.pl_model import Model
 
-def predict_from_ckpt(ckpt_path: Path, 
-                      dataloader: str = 'test', 
-                      return_preds: bool = True,
+def save_nifti_from_array(subj_id: str,
+                          arr: np.ndarray, 
+                          path: Path):
+    """
+    Save a nifti file from a numpy array and data from original nifti
+    """
+    img_name = f'{subj_id}_ses-01prisma3t_echo-01_part-magnitude-acq-MToff_MPM_MTsat_w.nii'
+    img = nib.load(Path(f'/mnt/scratch/7TPD/mpm_run_acu/bids/derivatives/hMRI/{subj_id}/Results') 
+                   / img_name)
+    nifti = nib.Nifti1Image(arr, img.affine, img.header)
+    nib.save(nifti, path)
+
+def get_data_and_model(ckpt_path: Path, 
                       dataset: str = 'hmri'):
 
     # read config file
@@ -46,7 +59,7 @@ def predict_from_ckpt(ckpt_path: Path,
     elif dataset == 'hmri':
         root_dir = Path('/mnt/scratch/7TPD/mpm_run_acu/bids/derivatives/hMRI')
         md_df = pd.read_csv(this_path/'bids_3t.csv')
-        data = HMRIDataModule(md_df=md_df, root_dir=root_dir, shuffle=False, **cfg['dataset'])
+        data = HMRIDataModule(md_df=md_df, root_dir=root_dir, **cfg['dataset']) #shuffle=False
 
         pretrained_model = get_pretrained_model(chkpt_path=Path(cfg['model']['chkpt_path']),
                                  input_channels=cfg['model']['in_channels'])
@@ -56,9 +69,21 @@ def predict_from_ckpt(ckpt_path: Path,
     # create dataset
     data.prepare_data()
     data.setup()
-    print("Training:  ", len(data.train_set))
-    print("Validation: ", len(data.val_set))
-    print("Test:      ", len(data.test_set))
+    # print("Training:  ", len(data.train_set))
+    # print("Validation: ", len(data.val_set))
+    # print("Test:      ", len(data.test_set))
+
+    return data, model
+    
+    
+
+def predict_from_ckpt(ckpt_path: Path, 
+                      dataloader: str = 'test', 
+                      return_preds: bool = True,
+                      dataset: str = 'hmri'):
+
+    data, model = get_data_and_model(ckpt_path=ckpt_path,
+                                    dataset=dataset)
 
     # obtain the dataloader
     if dataloader == 'test':
@@ -115,4 +140,57 @@ def get_pretrained_model(chkpt_path: Path, input_channels: int = 4):
     else:
         print('Model not supported')
         return None
+
+# Brain segmentation 
+
+def get_bounding_box_of_segmentation(binary_mask: np.ndarray):
+    """
+    Get the bounding box of a binary mask
+    """
+    # get bounding box
+    bounding_box = np.argwhere(binary_mask)
+    x_min, y_min, z_min = bounding_box.min(axis=0)
+    x_max, y_max, z_max = bounding_box.max(axis=0)
+    return x_min, x_max, y_min, y_max, z_min, z_max
+
+def crop_img(img: np.ndarray, return_dims: bool = False):
+    """
+    Crop an image to its bounding box
+    """
+    # get bounding box
+    x_min, x_max, y_min, y_max, z_min, z_max = get_bounding_box_of_segmentation(img)
+    # crop with extra margin
+    x_min = max(0, x_min - 10)
+    x_max = min(img.shape[0], x_max + 10)
+    y_min = max(0, y_min - 10)
+    y_max = min(img.shape[1], y_max + 10)
+    z_min = max(0, z_min - 10)
+    z_max = min(img.shape[2], z_max + 10)
+
+    if return_dims:
+        return x_min, x_max, y_min, y_max, z_min, z_max
     
+    return img[x_min:x_max, y_min:y_max, z_min:z_max]
+
+def obtain_brain_mask(subject: str, masks_path: Path = None):
+    
+    if masks_path is None:
+        masks_path = Path(f'/mnt/scratch/7TPD/mpm_run_acu/bids/{subject}/ses-01prisma3t/anat')
+
+    # get segmentation labels from all atlas
+    base_str = f'{subject}_ses-01prisma3t_echo-01_part-magnitude-acq-T1w_MPM.nii'
+    volumes = []
+    for cl in ['c1', 'c2', 'c3', 'c4', 'c5', 'c6']:
+        img = sitk.ReadImage(str(masks_path/f'{cl}{base_str}'))
+        volumes.append(sitk.GetArrayFromImage(img))
+
+    volumes_nda = np.stack(volumes, axis=0)
+    labels = np.argmax(volumes_nda, axis=0)
+
+    # get brain mask from 0 (gm) and 1 (wm) labels
+    brain_mask = np.int16(labels < 2)
+
+    # filter small objects
+    cc_mask = cc3d.largest_k(brain_mask, k=1)
+    
+    return cc_mask, masks_path

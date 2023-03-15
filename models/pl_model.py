@@ -36,6 +36,8 @@ def get_optimizer(name: str):
         return optim.Adam
     if name == 'sgd':
         return optim.SGD
+    if name == 'rmsprop':
+        return optim.RMSprop
     else:
         raise ValueError(f'Unknown loss name: {name}')
 
@@ -57,6 +59,7 @@ def get_monai_net(name: str, in_channels: int = 1, n_classes: int = 2):
                                             spatial_dims=3, 
                                             n_input_channels=in_channels, 
                                             num_classes=n_classes,
+                                            block_inplanes=[64, 128, 256, 512],
                                             pretrained=True)
 def get_3dresnet(n_classes: int = 2):
     args = get_def_args()
