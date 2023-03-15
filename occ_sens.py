@@ -65,6 +65,7 @@ def main():
 
     # set up model and data for inference
     subj_id = df.iloc[subj_idx]['id']
+    print(f'Predicting for subject {subj_id} ({split}) with target {target.cpu().numpy()}')
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     model.net.to(device)
 

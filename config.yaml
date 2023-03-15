@@ -30,8 +30,8 @@ model:
   loss: focal # dice, cross_entropy, bin_cross_entropy, focal, tversky
   optimizer_class: adam # sgd, adam, rmsprop
   learning_rate: 0.001
-  sch_patience: 30
+  sch_patience: 50
   momentum: 0 # 0.9  
   weight_decay: 0 # 0.0001    
 
-exp_name: brainhmri3dresnet-da02_bz3_focal_adam_lr0.001-v3
+exp_name: brainhmri3dresnet-da02_bz3_focal_adam_lr0.001-v4
