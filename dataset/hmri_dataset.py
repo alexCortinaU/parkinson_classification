@@ -354,3 +354,126 @@ class HMRIControlsDataModule(pl.LightningDataModule):
                             self.val_batch_size, 
                             num_workers=self.val_num_workers,
                             shuffle=False)
+    
+    def get_images(self, num, subj=0, mode='train'):
+        # get patches (num) from single train subject (subj)
+        # for visualization purposes
+        if mode == 'train':
+            subject = self.train_set[subj]
+        elif mode == 'val':
+            subject = self.val_set[subj]
+        sampler = tio.data.UniformSampler(self.patch_size)
+        patches = [patch['image'][tio.DATA] for patch in sampler(subject, num_patches=num)]
+        return torch.stack(patches, dim=0)
+    
+    def get_grid(self, subj=0, mode='train'):
+        # get patches from single subject (subj)
+        # for inference (reconstruction) purposes
+        if mode == 'train':
+            subject = self.train_set[subj]
+        elif mode == 'val':
+            subject = self.val_set[subj]
+        sampler = tio.data.GridSampler(subject, 
+                                       self.patch_size,
+                                       patch_overlap=0,
+                                       padding_mode='minimum')
+        samples = [patch for patch in sampler(subject)]
+        patches = torch.stack([sample['image'][tio.DATA] for sample in samples])
+        locations = torch.stack([sample[tio.LOCATION] for sample in samples])
+
+        return patches, locations, sampler, subject
+    
+class HMRIPDDataModule(HMRIControlsDataModule):
+    def __init__(self, md_df, 
+                root_dir,
+                train_batch_size = 4,
+                val_batch_size = 4,
+                train_num_workers = 4,
+                val_num_workers = 4, 
+                reshape_size = (128, 128, 128), 
+                patch_size = (64, 64, 64),
+                map_type = ['MTsat'],
+                queue_length = 20,
+                samples_per_volume = 9, 
+                test_split = 0.3,
+                random_state = 42,
+                windowed_dataset = False,
+                brain_masked = False,
+                augment = None,
+                shuffle = True):
+        super().__init__(md_df, 
+                        root_dir,
+                        train_batch_size = train_batch_size,
+                        val_batch_size = val_batch_size,
+                        train_num_workers = train_num_workers,
+                        val_num_workers = val_num_workers, 
+                        reshape_size = reshape_size, 
+                        patch_size = patch_size,
+                        map_type = map_type,
+                        queue_length = queue_length,
+                        samples_per_volume = samples_per_volume,
+                        test_split = test_split, 
+                        random_state = random_state,
+                        windowed_dataset = windowed_dataset,
+                        brain_masked = brain_masked,
+                        augment = augment,
+                        shuffle = shuffle)
+
+    def prepare_data(self):
+
+        subjs_to_drop = ['sub-058', 'sub-016']
+        if self.brain_masked:
+            subjs_to_drop.append('sub-025')
+        for drop_id in subjs_to_drop: # 'sub-016'
+            self.md_df.drop(self.md_df[self.md_df.id == drop_id].index, inplace=True)
+        
+        # Reset index        
+        self.md_df.reset_index(drop=True, inplace=True)
+        print(f'Drop subjects {subjs_to_drop}')
+        
+                                       
+        image_paths = self.get_subjects_list(self.md_df)
+        
+        self.subjects = []
+        for image_path in image_paths:
+            # 'image' and 'label' are arbitrary names for the images
+            subject = tio.Subject(image=tio.ScalarImage(image_path))
+            self.subjects.append(subject)
+
+    def setup(self, stage=None):
+        
+        # Assign train/val datasets for use in dataloaders
+        self.preprocess = self.get_preprocessing_transform()
+        self.get_augmentation_transform()
+        self.transform = tio.Compose([self.preprocess, self.augment])
+
+        self.dataset = tio.SubjectsDataset(self.subjects, transform=self.transform)
+
+    def dataloader(self):
+        sampler = tio.data.UniformSampler(self.patch_size)
+        patches_queue = tio.Queue(self.dataset,
+                                  self.queue_length,
+                                  self.samples_per_volume,
+                                  sampler,
+                                  num_workers=self.train_num_workers,
+                                  shuffle_subjects=False,
+                                  shuffle_patches=False)
+        return DataLoader(patches_queue, 
+                            self.train_batch_size, 
+                            num_workers=0,
+                            shuffle=False)
+    
+    def get_grid(self, subj=0):
+        # get patches from single subject (subj)
+        # for inference (reconstruction) purposes
+        
+        subject = self.dataset[subj]
+        sampler = tio.data.GridSampler(subject, 
+                                       self.patch_size,
+                                       patch_overlap=0,
+                                       padding_mode='minimum')
+        samples = [patch for patch in sampler(subject)]
+        patches = torch.stack([sample['image'][tio.DATA] for sample in samples])
+        locations = torch.stack([sample[tio.LOCATION] for sample in samples])
+
+        return patches, locations, sampler, subject

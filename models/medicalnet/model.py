@@ -3,11 +3,11 @@ sys.path.append('models/medicalnet/')
 from pathlib import Path
 # this_path = Path().resolve()
 this_path = Path(__file__).parent.resolve()
-print(this_path)
+# print(this_path)
 
 import torch
 from torch import nn
-import resnet
+import models.medicalnet.resnet as resnet
 
 
 def generate_model(opt):
