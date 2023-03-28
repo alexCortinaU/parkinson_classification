@@ -3,6 +3,7 @@ from glob import glob
 from pathlib import Path
 import pandas as pd
 import torchio as tio
+import torch
 import pytorch_lightning as pl
 import numpy as np
 from pytorch_lightning.loggers import TensorBoardLogger
@@ -13,7 +14,7 @@ from utils.utils import get_pretrained_model
 
 
 def main():
-
+    torch.autograd.set_detect_anomaly(True)
     this_path = Path().resolve()
 
     # read the config file
@@ -57,18 +58,26 @@ def main():
     pd_patches, pd_locations, pd_sampler, pd_subject = data_pd.get_grid()
 
     # create model
-    model = Model_AE(net='autoencoder', **cfg['model'])
+    model = Model_AE(patch_size=cfg['dataset']['patch_size'],
+                      **cfg['model'])
     
     print(f"--- \n --- {cfg['exp_name']}")
 
     # create callbacks
+    if 'vae' in cfg['model']['net']:
+        is_vae = True
+    else:
+        is_vae = False
+
     if cfg['training']['display_recons']:
         train_display = GenerateReconstructions(data.get_images(num=4, mode='train'),
                                                 every_n_epochs=10,
-                                                split='train')
+                                                split='train',
+                                                vae=is_vae)
         val_display = GenerateReconstructions(data.get_images(num=4, mode='val'),
                                                 every_n_epochs=10,
-                                                split='val')
+                                                split='val',
+                                                vae=is_vae)
     # create reconstruction error callback
 
     hc_re_callback = ComputeRE(input_imgs=hc_patches, 
@@ -76,14 +85,16 @@ def main():
                                sampler=hc_sampler, 
                                subject=hc_subject,
                                every_n_epochs=1,
-                               cohort='controls')
+                               cohort='controls',
+                               vae=is_vae)
     
     pd_re_callback = ComputeRE(input_imgs=pd_patches,
                                 locations=pd_locations,
                                 sampler=pd_sampler,
                                 subject=pd_subject,
                                 every_n_epochs=1,
-                                cohort='pd')
+                                cohort='pd',
+                                vae=is_vae)
     # create other callbacks
     checkpoint_callback = pl.callbacks.ModelCheckpoint(save_top_k=5,
                                           monitor=cfg['training']['monitor_ckpt'],

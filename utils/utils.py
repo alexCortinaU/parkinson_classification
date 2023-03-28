@@ -141,6 +141,41 @@ def get_pretrained_model(chkpt_path: Path, input_channels: int = 4):
         print('Model not supported')
         return None
 
+# Reconstruction
+
+def reconstruct(data, model, ckpt_path=None, overlap_mode='crop', save_img=False, out_dir=None, type='pd'):
+    patches, locations, sampler, subject, subj_id = data
+    input_imgs = patches.to(model.device)
+    aggregator = tio.data.GridAggregator(sampler, overlap_mode=overlap_mode)  
+    with torch.no_grad():
+        x_hat = model(input_imgs)
+    aggregator.add_batch(x_hat, locations)
+    reconstructed = aggregator.get_output_tensor()
+
+    # Compute reconstruction error
+    subject = subject['image'][tio.DATA]
+    diff = [torch.pow(subject[i] - reconstructed[i], 2) for i in range(subject.shape[0])]
+    rerror = torch.sqrt(torch.sum(torch.stack(diff), dim=0))
+    rerror = rerror.cpu().numpy()
+    
+    if ckpt_path is not None:
+        if out_dir is None:
+            out_dir = Path('/home/alejandrocu/Documents/parkinson_classification/reconstructions') / Path(ckpt_path).parent.parent.parent.name
+            out_dir.mkdir(parents=True, exist_ok=True)
+        
+    if save_img:
+        save_nifti_from_array(subj_id=subj_id,
+                              arr=reconstructed[0].cpu().numpy(),
+                              path=out_dir / f'{type}_{subj_id}_recon.nii.gz')
+        save_nifti_from_array(subj_id=subj_id,
+                              arr=rerror,
+                              path=out_dir / f'{type}_{subj_id}_re_error.nii.gz')
+        save_nifti_from_array(subj_id=subj_id,
+                              arr=subject[0].cpu().numpy(),
+                              path=out_dir / f'{type}_{subj_id}_original.nii.gz')
+    
+    return rerror
+
 # Brain segmentation 
 
 def get_bounding_box_of_segmentation(binary_mask: np.ndarray):

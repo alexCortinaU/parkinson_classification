@@ -366,16 +366,18 @@ class HMRIControlsDataModule(pl.LightningDataModule):
         patches = [patch['image'][tio.DATA] for patch in sampler(subject, num_patches=num)]
         return torch.stack(patches, dim=0)
     
-    def get_grid(self, subj=0, mode='train'):
+    def get_grid(self, subj=0, overlap=0, mode='train', patch_size=None):
         # get patches from single subject (subj)
         # for inference (reconstruction) purposes
         if mode == 'train':
             subject = self.train_set[subj]
         elif mode == 'val':
             subject = self.val_set[subj]
+        if patch_size is None:
+            patch_size = self.patch_size
         sampler = tio.data.GridSampler(subject, 
-                                       self.patch_size,
-                                       patch_overlap=0,
+                                       patch_size=patch_size,
+                                       patch_overlap=overlap,
                                        padding_mode='minimum')
         samples = [patch for patch in sampler(subject)]
         patches = torch.stack([sample['image'][tio.DATA] for sample in samples])
@@ -463,14 +465,16 @@ class HMRIPDDataModule(HMRIControlsDataModule):
                             num_workers=0,
                             shuffle=False)
     
-    def get_grid(self, subj=0):
+    def get_grid(self, subj=0, overlap=0, patch_size=None):
         # get patches from single subject (subj)
         # for inference (reconstruction) purposes
         
         subject = self.dataset[subj]
+        if patch_size is None:
+            patch_size = self.patch_size
         sampler = tio.data.GridSampler(subject, 
-                                       self.patch_size,
-                                       patch_overlap=0,
+                                       patch_size=patch_size,
+                                       patch_overlap=overlap,
                                        padding_mode='minimum')
         samples = [patch for patch in sampler(subject)]
         patches = torch.stack([sample['image'][tio.DATA] for sample in samples])

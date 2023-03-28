@@ -3,7 +3,7 @@ import os
 import tempfile
 from glob import glob
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple, List
 
 from torch import optim, nn
 import torch
@@ -20,6 +20,7 @@ from models.medicalnet.setting import get_def_args
 # from utils.utils import get_pretrained_model
 from pytorch_lightning.callbacks import Callback
 import torchvision
+from models.svae import spatialVAE
 
 # class ReconstructionError(torchmetrics.Metric):
 #     def __init__(self, maps: list, **kwargs):
@@ -49,7 +50,14 @@ import torchvision
 #     full_state_update: bool = True
 
 class ComputeRE(Callback):
-    def __init__(self, input_imgs, locations, sampler, subject, every_n_epochs=1, cohort="control"):
+    def __init__(self,
+                 input_imgs,
+                 locations,
+                 sampler,
+                 subject,
+                 every_n_epochs=1,
+                 cohort="control",
+                 vae=False):
         super().__init__()
         self.input_imgs = input_imgs  # Images to reconstruct during training
         # Only save those images every N epochs (otherwise tensorboard gets quite large)
@@ -57,6 +65,7 @@ class ComputeRE(Callback):
         self.sampler = sampler
         self.every_n_epochs = every_n_epochs
         self.cohort = cohort
+        self.vae = vae
         self.aggregator = tio.data.GridAggregator(sampler)
         self.og_img = subject['image'][tio.DATA]
 
@@ -67,7 +76,10 @@ class ComputeRE(Callback):
             input_imgs = self.input_imgs.to(pl_module.device)
             with torch.no_grad():
                 pl_module.eval()
-                reconst_imgs = pl_module(input_imgs)
+                if self.vae:
+                    reconst_imgs, _, _, _ = pl_module(input_imgs)
+                else:
+                    reconst_imgs = pl_module(input_imgs)
                 pl_module.train()
 
             # Aggregate patches into image
@@ -79,7 +91,25 @@ class ComputeRE(Callback):
             rerror = torch.sqrt(torch.sum(torch.stack(diff), dim=0))
             trainer.logger.experiment.add_scalar(f"RE {self.cohort}", torch.mean(rerror), global_step=trainer.global_step)
 
-def get_criterions(name: str):
+class LossL1KLD(nn.Module):
+
+    def __init__(self, gamma: float = 0.9):
+        super(LossL1KLD, self).__init__()
+        self.gamma = gamma
+        self.l1criterion = nn.L1Loss()
+
+    def forward(self, x_hat: torch.Tensor, x: torch.Tensor, mu: torch.Tensor, log_var: torch.Tensor):
+
+        # Reconstruction loss
+        l1 = self.l1criterion(x_hat, x) #_hat, x)
+        # KLD loss
+        kld = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
+        loss = self.gamma * l1 + (1 - self.gamma) * kld
+
+        return loss
+
+def get_criterions(name: str, gamma: float = 0.9):
+
     if name == 'cross_entropy':
         return nn.CrossEntropyLoss()
     # elif name == 'dice':
@@ -90,10 +120,14 @@ def get_criterions(name: str):
         return losses.BinaryFocalLossWithLogits(0.5)
     elif name == 'tversky':
         return losses.TverskyLoss(0.4, 0.4)
+    
+    # reconstruction losses will need to be changed in order to work with multiple channels
     elif name == 'l1':
         return nn.L1Loss()
     elif name == 'mse':
         return nn.MSELoss()
+    elif name == 'l1kld':
+        return LossL1KLD(gamma=gamma)
     else:
         raise ValueError(f'Unknown loss name: {name}')
 
@@ -139,29 +173,65 @@ def get_3dresnet(n_classes: int = 2):
                                 )
     return model
 
-def get_autoencoder(net, in_channels: int = 1,):
+def get_autoencoder(net, 
+                    channels, 
+                    in_channels: int = 1, 
+                    ps: int = 128,
+                    latent_size: int = 128):
+    
     if net == 'autoencoder':
+        strides = [2 for _ in range(len(channels))]
         net = monai.networks.nets.AutoEncoder(
             spatial_dims=3,
             in_channels=in_channels,
             out_channels=in_channels,
-            channels=(32, 64, 128, 256),
-            strides=(2, 2, 2, 2),
+            channels=channels,
+            strides=strides,
             norm='BATCH',
-            bias=False)
+            bias=True)
         
         # add activation to the last layer
         net.decode[-1].conv.add_module('adn', monai.networks.blocks.ADN('NDA', 1, act='sigmoid'))
 
         return net
-    else:
-        return None
+    
+    elif net == 'vae':
+        strides = [2 for _ in range(len(channels))]
+        net = monai.networks.nets.VarAutoEncoder(
+            spatial_dims=3,
+            in_shape=(in_channels, ps, ps, ps),
+            out_channels=in_channels,
+            channels=channels,
+            strides=strides,
+            latent_size=latent_size,
+            norm='BATCH',
+            bias=True,
+            use_sigmoid=True)
+        
+        return net
+    
+    elif net == 'svae':
+        strides = [2 for _ in range(len(channels))]
+        net = spatialVAE(spatial_dims=3,
+                in_shape=[in_channels, ps, ps, ps],      
+                out_channels=in_channels,
+                latent_size=latent_size,
+                channels=channels,
+                strides=strides,
+                norm='BATCH',
+                bias=True,
+                use_sigmoid=True)
+        
+        return net
+
+
 class Model(pl.LightningModule):
     def __init__(self,
                     net,                  
-                    loss, 
+                    loss,
                     learning_rate, 
                     optimizer_class,
+                    gamma=0.9,
                     chkpt_path=None, 
                     n_classes = 2, 
                     in_channels = 1, 
@@ -170,7 +240,8 @@ class Model(pl.LightningModule):
                     momentum = 0):
         super().__init__()
         self.lr = learning_rate
-        self.criterion = get_criterions(loss)
+        self.loss = loss
+        self.criterion = get_criterions(loss, gamma=gamma)
         self.optimizer_class = get_optimizer(optimizer_class)
         self.chkpt_path = chkpt_path
         self.sch_patience = sch_patience
@@ -267,13 +338,19 @@ class Model_AE(Model):
                     loss, 
                     learning_rate, 
                     optimizer_class, 
+                    gamma = 0.1,
+                    channels = [32, 64, 128, 256],
                     n_classes = 2, 
                     in_channels = 1, 
                     sch_patience = 15, 
                     weight_decay = 0.0001,
-                    momentum = 0):
+                    momentum = 0,
+                    patch_size = 64,
+                    latent_size = 128):
+        
         super().__init__(net=None,
                          loss=loss, 
+                         gamma=gamma,
                          learning_rate=learning_rate, 
                          optimizer_class=optimizer_class,
                          chkpt_path=None,
@@ -282,19 +359,38 @@ class Model_AE(Model):
                          sch_patience=sch_patience, 
                          weight_decay=weight_decay, 
                          momentum=momentum)
+        
+        self.channels = channels
         self.train_mse = torchmetrics.MeanSquaredError()
         self.val_mse = torchmetrics.MeanSquaredError()
-        self.net = get_autoencoder(net, in_channels)
+        self.net = get_autoencoder(net, 
+                                   self.channels, 
+                                   in_channels, 
+                                   patch_size,
+                                   latent_size)
 
     def infer_batch(self, batch):
         x = batch["image"][tio.DATA]
         x_hat = self.net(x)
+        # x_hat = self.net(x) # , mu, logvar, _ 
         return x_hat, x
+    
+    def vae_step(self, batch):
+        x = batch["image"][tio.DATA]
+        x_hat, mu, logvar, _ = self.net(x)
+        loss = self.criterion(x_hat, x, mu, logvar)
+        # loss = self.criterion(x_hat, x)
+        return x, x_hat, loss
 
     def training_step(self, batch, batch_idx):
-        x_hat, x = self.infer_batch(batch)
-        batch_size = len(x)
-        loss = self.criterion(x_hat, x)
+        
+        if self.loss == "l1kld":
+            x, x_hat, loss = self.vae_step(batch)
+        else:
+            x_hat, x = self.infer_batch(batch)                      
+            loss = self.criterion(x_hat, x).mean()
+
+        batch_size = len(x)  
         self.log("train_loss", loss, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
         self.train_mse(x_hat, x)
         self.log("train_mse", self.train_mse, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
@@ -302,9 +398,14 @@ class Model_AE(Model):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        x_hat, x = self.infer_batch(batch)
-        batch_size = len(x)
-        loss = self.criterion(x_hat, x).mean()
+
+        if self.loss == "l1kld":
+            x, x_hat, loss = self.vae_step(batch)
+        else:
+            x_hat, x = self.infer_batch(batch)          
+            loss = self.criterion(x_hat, x).mean()
+
+        batch_size = len(x)  
         self.log("val_loss", loss, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
         self.val_mse(x_hat, x)
         self.log("val_mse", self.val_mse, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
@@ -316,12 +417,13 @@ class Model_AE(Model):
 
 
 class GenerateReconstructions(Callback):
-    def __init__(self, input_imgs, every_n_epochs=1, split="train"):
+    def __init__(self, input_imgs, every_n_epochs=1, split="train", vae=False):
         super().__init__()
         self.input_imgs = input_imgs  # Images to reconstruct during training
         # Only save those images every N epochs (otherwise tensorboard gets quite large)
         self.every_n_epochs = every_n_epochs
         self.split = split
+        self.vae = vae
 
     def on_train_epoch_end(self, trainer, pl_module):
         if trainer.current_epoch % self.every_n_epochs == 0:
@@ -329,10 +431,13 @@ class GenerateReconstructions(Callback):
             input_imgs = self.input_imgs.to(pl_module.device)
             with torch.no_grad():
                 pl_module.eval()
-                reconst_imgs = pl_module(input_imgs)
+                if self.vae:
+                    reconst_imgs, _, _, _ = pl_module(input_imgs)
+                else:
+                    reconst_imgs = pl_module(input_imgs)
                 pl_module.train()
             # Plot and add to tensorboard
             slice = input_imgs.shape[-1] // 2
-            imgs = torch.stack([input_imgs[..., slice], reconst_imgs[..., slice]], dim=1).flatten(0, 1)
+            imgs = torch.stack([input_imgs[..., slice].detach(), reconst_imgs[..., slice].detach()], dim=1).flatten(0, 1)
             grid = torchvision.utils.make_grid(imgs, nrow=2, normalize=True, range=(-1, 1))
             trainer.logger.experiment.add_image(f"Reconstructions {self.split}", grid, global_step=trainer.global_step)

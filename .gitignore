@@ -6,8 +6,8 @@ p1_ppmi_outs/
 p1_hmri_outs/
 occ_sens/
 p2_hmri_outs/
-reconstructions/aehmri-da00_bz32_mse_adam_lr0.001-v4/
-
+reconstructions/
+GenerativeModels/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
