@@ -143,12 +143,17 @@ def get_pretrained_model(chkpt_path: Path, input_channels: int = 4):
 
 # Reconstruction
 
-def reconstruct(data, model, ckpt_path=None, overlap_mode='crop', save_img=False, out_dir=None, type='pd'):
+def reconstruct(data, model, ckpt_path=None, overlap_mode='crop', save_img=False, out_dir=None, type='pd', vae=False):
     patches, locations, sampler, subject, subj_id = data
     input_imgs = patches.to(model.device)
-    aggregator = tio.data.GridAggregator(sampler, overlap_mode=overlap_mode)  
+    aggregator = tio.data.GridAggregator(sampler, overlap_mode=overlap_mode)
+
     with torch.no_grad():
-        x_hat = model(input_imgs)
+        if vae:
+            x_hat, _, _, _ = model(input_imgs)
+        else:
+            x_hat = model(input_imgs)
+
     aggregator.add_batch(x_hat, locations)
     reconstructed = aggregator.get_output_tensor()
 

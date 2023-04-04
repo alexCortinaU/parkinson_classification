@@ -96,7 +96,7 @@ class LossL1KLD(nn.Module):
     def __init__(self, gamma: float = 0.9):
         super(LossL1KLD, self).__init__()
         self.gamma = gamma
-        self.l1criterion = nn.L1Loss()
+        self.l1criterion = nn.L1Loss(reduction='sum')
 
     def forward(self, x_hat: torch.Tensor, x: torch.Tensor, mu: torch.Tensor, log_var: torch.Tensor):
 
@@ -211,13 +211,23 @@ def get_autoencoder(net,
         return net
     
     elif net == 'svae':
-        strides = [2 for _ in range(len(channels))]
+        # strides = [2 for _ in range(len(channels))]
+        # net = spatialVAE(spatial_dims=3,
+        #         in_shape=[in_channels, ps, ps, ps],      
+        #         out_channels=in_channels,
+        #         latent_size=latent_size,
+        #         channels=channels,
+        #         strides=strides,
+        #         norm='BATCH',
+        #         bias=True,
+        #         use_sigmoid=True)
+
         net = spatialVAE(spatial_dims=3,
-                in_shape=[in_channels, ps, ps, ps],      
-                out_channels=in_channels,
-                latent_size=latent_size,
-                channels=channels,
-                strides=strides,
+                in_shape=[1, 128, 128, 128],      
+                out_channels=1,
+                latent_size=128,
+                channels=(32, 64, 128),
+                strides=(2, 2, 2),
                 norm='BATCH',
                 bias=True,
                 use_sigmoid=True)

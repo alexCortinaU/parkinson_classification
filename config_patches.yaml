@@ -24,7 +24,7 @@ dataset:
     # - R2scorr
     # - PD_R2scorr
   queue_length: 128
-  samples_per_volume: 1
+  samples_per_volume: 9
   random_state: 42
   windowed_dataset: True
   brain_masked: True
@@ -49,4 +49,4 @@ model:
   momentum: 0 # 0.9  
   weight_decay: 0 # 0.0001    
 
-exp_name: 3svaeR1-da00_bz32_l1kld_adam_lr0.001_ps128
+exp_name: 4svaeR1-da00_bz32_l1kld_adam_lr0.001_ps128

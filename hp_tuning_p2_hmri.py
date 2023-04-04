@@ -15,7 +15,8 @@ this_path = Path().resolve()
 def full_train_model(cfg):
 
     # Set data directory
-    root_dir = Path('/mnt/scratch/7TPD/mpm_run_acu/bids/derivatives/hMRI')
+    # root_dir = Path('/mnt/scratch/7TPD/mpm_run_acu/bids/derivatives/hMRI')
+    root_dir = Path('/mnt/projects/7TPD/bids/derivatives/hMRI_acu/derivatives/hMRI')
     md_df = pd.read_csv(this_path/'bids_3t.csv')
     md_df_hc = md_df[md_df['group'] == 0]
     md_df_pd = md_df[md_df['group'] == 1]
@@ -45,16 +46,24 @@ def full_train_model(cfg):
     pd_patches, pd_locations, pd_sampler, pd_subject = data_pd.get_grid()
 
     # create model
-    model = Model_AE(**cfg['model'])
+    model = Model_AE(patch_size=cfg['dataset']['patch_size'],
+                     **cfg['model'])
 
     # create callbacks
+    if 'vae' in cfg['model']['net']:
+        is_vae = True
+    else:
+        is_vae = False
+
     if cfg['training']['display_recons']:
         train_display = GenerateReconstructions(data.get_images(num=4, mode='train'),
                                                 every_n_epochs=10,
-                                                split='train')
+                                                split='train',
+                                                vae=is_vae)
         val_display = GenerateReconstructions(data.get_images(num=4, mode='val'),
                                                 every_n_epochs=10,
-                                                split='val')
+                                                split='val',
+                                                vae=is_vae)
     # create reconstruction error callback
 
     hc_re_callback = ComputeRE(input_imgs=hc_patches, 
@@ -62,17 +71,18 @@ def full_train_model(cfg):
                                sampler=hc_sampler, 
                                subject=hc_subject,
                                every_n_epochs=1,
-                               cohort='controls')
+                               cohort='controls',
+                               vae=is_vae)
     
     pd_re_callback = ComputeRE(input_imgs=pd_patches,
                                 locations=pd_locations,
                                 sampler=pd_sampler,
                                 subject=pd_subject,
                                 every_n_epochs=1,
-                                cohort='pd')
+                                cohort='pd',
+                                vae=is_vae)
     # create other callbacks
-    checkpoint_callback = pl.callbacks.ModelCheckpoint(save_top_k=3, 
-                                                       save_last=True,
+    checkpoint_callback = pl.callbacks.ModelCheckpoint(save_last=True,
                                                     monitor=cfg['training']['monitor_ckpt'],
                                                     mode="min",
                                                     filename="{epoch:02d}-{val_loss:.4f}-{val_mse:.4f}")
@@ -123,7 +133,7 @@ def full_train_model(cfg):
     del trainer
     return model, data, data_pd, datetime.now() - start, dump_path.parent
 
-def compute_recons(model, data_hc, data_pd, out_dir, ovlap=6):
+def compute_recons(model, data_hc, data_pd, out_dir, ovlap=6, vae=False):
     re_all = []
     for i in range(len(data_hc.md_df_val)):    
         for overlap in ['hann']:    
@@ -133,8 +143,13 @@ def compute_recons(model, data_hc, data_pd, out_dir, ovlap=6):
             hc_data = [hc_patches, hc_locations, hc_sampler, hc_subject, hc_subj_id]
             if overlap == 'hann':
                 if hc_subj_id == 'sub-027':
-                    hc_rerror = reconstruct(hc_data, model, overlap_mode=overlap, save_img=True, type='hn_hc', out_dir=out_dir)
-            hc_rerror = reconstruct(hc_data, model, overlap_mode=overlap, save_img=False, type='hc')
+                    hc_rerror = reconstruct(hc_data, model, 
+                                            overlap_mode=overlap, 
+                                            save_img=True, 
+                                            type='hn_hc', 
+                                            out_dir=out_dir, 
+                                            vae=vae)
+            hc_rerror = reconstruct(hc_data, model, overlap_mode=overlap, save_img=False, type='hc', vae=vae)
             re_subj['overlap'] = overlap
             re_subj['mean_re'] = np.mean(hc_rerror)
             re_subj['id'] = hc_subj_id
@@ -149,8 +164,14 @@ def compute_recons(model, data_hc, data_pd, out_dir, ovlap=6):
             pd_data = [pd_patches, pd_locations, pd_sampler, pd_subject, pd_subj_id]
             if overlap == 'hann':
                 if pd_subj_id == 'sub-004':
-                    pd_rerror = reconstruct(pd_data, model, overlap_mode=overlap, save_img=True, type='hn_pd', out_dir=out_dir)
-            pd_rerror = reconstruct(pd_data, model, overlap_mode=overlap, save_img=False, type='pd')
+                    pd_rerror = reconstruct(pd_data, 
+                                            model, 
+                                            overlap_mode=overlap, 
+                                            save_img=True, 
+                                            type='hn_pd', 
+                                            out_dir=out_dir,
+                                            vae=vae)
+            pd_rerror = reconstruct(pd_data, model, overlap_mode=overlap, save_img=False, type='pd', vae=vae)
             re_subj['overlap'] = overlap
             re_subj['mean_re'] = np.mean(pd_rerror)
             re_subj['id'] = pd_subj_id
@@ -170,29 +191,33 @@ def main():
     pl.seed_everything(cfg['dataset']['random_state'],  workers=True)
 
     # parameters to tune
-    psizes = [96, 128]
-    lrates = [0.008, 0.001]
+    # psizes = [96, 128]
+    # lrates = [0.008, 0.001]
+
+    maps = ['MTsat', 'R1', 'R2scorr', 'PD_R2scorr']
+    gammas = [0.9, 0.95]
 
     exc_times = []
-    for lr in lrates:
-        for ps in psizes: 
+    for gamma in gammas:
+        for map_type in maps: 
             times = {}   
-            cfg['model']['learning_rate'] = lr
-            cfg['dataset']['patch_size'] = ps
-            cfg['exp_name'] = f'pd_hmri_lr{lr}_ps{ps}'
+            cfg['model']['gamma'] = gamma
+            # cfg['dataset']['patch_size'] = ps
+            cfg['dataset']['map_type'] = [map_type]
+            cfg['exp_name'] = f'pd_hmri_svae_{map_type}_gamma_{gamma}'
             model, data_hc, data_pd, exc_time, dump_path = full_train_model(cfg)
             # load model from checkpoint
             last_ckpt_path = dump_path/'version_0'/ 'checkpoints'/ 'last.ckpt'
             model = Model_AE.load_from_checkpoint(last_ckpt_path, **cfg['model'])
             model = model.to('cuda')
             model.eval()
-            compute_recons(model, data_hc, data_pd, dump_path)
+            compute_recons(model, data_hc, data_pd, dump_path, vae=True)
             del model, data_hc, data_pd
             times['exp_name'] = cfg['exp_name']  
             times['time'] = exc_time    
             exc_times.append(times)
     
-    pd.DataFrame(exc_times).to_csv(dump_path.parent/'hpt2_execution_times_.csv', index=False)
+    pd.DataFrame(exc_times).to_csv(dump_path.parent/'svae_execution_times_.csv', index=False)
 
 if __name__ == '__main__':
     main()
