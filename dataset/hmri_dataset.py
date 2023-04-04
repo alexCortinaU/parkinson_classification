@@ -59,8 +59,12 @@ class HMRIDataModule(pl.LightningDataModule):
     def get_subjects_list(self, md_df):
         subjects_list = []
         subjects_labels = []
+        md_df.reset_index(inplace=True, drop=True)
+
         for i in range(len(md_df)):
-            subj_dir = self.root_dir / md_df.iloc[i, 0] / 'Results'
+            if self.brainstem_masked:
+                subj_dir = self.root_dir / md_df['id'][i] / 'Results' / 'brainstem_masked'
+            subj_dir = self.root_dir / md_df['id'][i] / 'Results'
             if self.windowed_dataset:
                 if self.brain_masked:
                     hmri_files = sorted(list(subj_dir.glob('*w_masked.nii')), key=lambda x: x.stem)
