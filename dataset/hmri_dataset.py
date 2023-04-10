@@ -64,17 +64,21 @@ class HMRIDataModule(pl.LightningDataModule):
         for i in range(len(md_df)):
             if self.brainstem_masked:
                 subj_dir = self.root_dir / md_df['id'][i] / 'Results' / 'brainstem_masked'
-            subj_dir = self.root_dir / md_df['id'][i] / 'Results'
-            if self.windowed_dataset:
-                if self.brain_masked:
-                    hmri_files = sorted(list(subj_dir.glob('*w_masked.nii')), key=lambda x: x.stem)
-                else:
-                    hmri_files = sorted(list(subj_dir.glob('*_w.nii')), key=lambda x: x.stem)
-            else:
                 hmri_files = sorted(list(subj_dir.glob('*.nii')), key=lambda x: x.stem)
-                hmri_files = [file for file in hmri_files if '_w' not in file.stem]
-            subjects_list.append(hmri_files)
-            subjects_labels.append(md_df.iloc[i, -1])
+                subjects_list.append(hmri_files)
+                subjects_labels.append(md_df.iloc[i, -1])
+            else:
+                subj_dir = self.root_dir / md_df['id'][i] / 'Results'
+                if self.windowed_dataset:
+                    if self.brain_masked:
+                        hmri_files = sorted(list(subj_dir.glob('*w_masked.nii')), key=lambda x: x.stem)
+                    else:
+                        hmri_files = sorted(list(subj_dir.glob('*_w.nii')), key=lambda x: x.stem)
+                else:
+                    hmri_files = sorted(list(subj_dir.glob('*.nii')), key=lambda x: x.stem)
+                    hmri_files = [file for file in hmri_files if '_w' not in file.stem]
+                subjects_list.append(hmri_files)
+                subjects_labels.append(md_df.iloc[i, -1])
 
         return subjects_list, subjects_labels
 
