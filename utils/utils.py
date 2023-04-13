@@ -130,13 +130,16 @@ def get_pretrained_model(chkpt_path: Path, input_channels: int = 4):
     model = Model.load_from_checkpoint(chkpt_path, **exp_cfg['model'])
 
     if exp_cfg['model']['net'] == '3dresnet':
-        model.net.conv1 = torch.nn.Conv3d(in_channels= input_channels, 
-                                    out_channels=64, 
-                                    kernel_size=(7, 7, 7), 
-                                    stride=(2, 2, 2), 
-                                    padding=(3, 3, 3), 
-                                    bias=False)
-        return model
+        if input_channels > 1:
+            model.net.conv1 = torch.nn.Conv3d(in_channels= input_channels, 
+                                        out_channels=64, 
+                                        kernel_size=(7, 7, 7), 
+                                        stride=(2, 2, 2), 
+                                        padding=(3, 3, 3), 
+                                        bias=False)
+            return model
+        else:
+            return model
     else:
         print('Model not supported')
         return None

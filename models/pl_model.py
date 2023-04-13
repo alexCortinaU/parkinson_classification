@@ -22,33 +22,6 @@ from pytorch_lightning.callbacks import Callback
 import torchvision
 from models.svae import spatialVAE
 
-# class ReconstructionError(torchmetrics.Metric):
-#     def __init__(self, maps: list, **kwargs):
-#         super().__init__()
-#         for map in maps:
-#             self.add_state(map, default=torch.tensor(0), dist_reduce_fx="sum")
-
-#     def update(self, x: torch.Tensor, x_hat: torch.Tensor):
-#         preds, target = self._input_format(x, x_hat)
-#         assert preds.shape == target.shape
-
-#         self.correct += torch.sum(preds == target)
-#         self.total += target.numel()
-
-#     def compute(self):
-#         return self.correct.float() / self.total
-#     # Set to True if the metric is differentiable else set to False
-#     is_differentiable: Optional[bool] = None
-
-#     # Set to True if the metric reaches it optimal value when the metric is maximized.
-#     # Set to False if it when the metric is minimized.
-#     higher_is_better: Optional[bool] = True
-
-#     # Set to True if the metric during 'update' requires access to the global metric
-#     # state for its calculations. If not, setting this to False indicates that all
-#     # batch states are independent and we will optimize the runtime of 'forward'
-#     full_state_update: bool = True
-
 class ComputeRE(Callback):
     def __init__(self,
                  input_imgs,
@@ -108,7 +81,7 @@ class LossL1KLD(nn.Module):
 
         return loss
 
-def get_criterions(name: str, gamma: float = 0.9):
+def get_criterions(name: str, gamma: float = 0.9, alpha: float = 0.5):
 
     if name == 'cross_entropy':
         return nn.CrossEntropyLoss()
@@ -117,7 +90,7 @@ def get_criterions(name: str, gamma: float = 0.9):
     elif name == 'bin_cross_entropy':
         return nn.BCEWithLogitsLoss()
     elif name == 'focal':
-        return losses.BinaryFocalLossWithLogits(0.5)
+        return losses.BinaryFocalLossWithLogits(alpha=alpha)
     elif name == 'tversky':
         return losses.TverskyLoss(0.4, 0.4)
     
@@ -134,6 +107,8 @@ def get_criterions(name: str, gamma: float = 0.9):
 def get_optimizer(name: str):
     if name == 'adam':
         return optim.Adam
+    if name == 'adamw':
+        return optim.AdamW
     if name == 'sgd':
         return optim.SGD
     if name == 'rmsprop':
@@ -142,6 +117,7 @@ def get_optimizer(name: str):
         raise ValueError(f'Unknown loss name: {name}')
 
 def get_monai_net(name: str, in_channels: int = 1, n_classes: int = 2):
+
     if name == 'densenet':
         return monai.networks.nets.DenseNet121(spatial_dims=3, 
                                                 in_channels=in_channels, 
@@ -161,6 +137,7 @@ def get_monai_net(name: str, in_channels: int = 1, n_classes: int = 2):
                                             num_classes=n_classes,
                                             block_inplanes=[64, 128, 256, 512],
                                             pretrained=True)
+    
 def get_3dresnet(n_classes: int = 2):
     args = get_def_args()
     model, _ = generate_model(args) 
@@ -171,6 +148,11 @@ def get_3dresnet(n_classes: int = 2):
                                 # the last Conv3d layer has out_channels = 512
                                 nn.Linear(512, n_classes)
                                 )
+    for m in model.conv_seg.modules():
+        if isinstance(m, nn.Linear):
+            nn.init.xavier_uniform_(m.weight)
+            nn.init.constant_(m.bias, 0)
+
     return model
 
 def get_autoencoder(net, 
@@ -241,7 +223,9 @@ class Model(pl.LightningModule):
                     loss,
                     learning_rate, 
                     optimizer_class,
+                    group_params=False,
                     gamma=0.9,
+                    alpha=0.5,
                     chkpt_path=None, 
                     n_classes = 2, 
                     in_channels = 1, 
@@ -251,7 +235,8 @@ class Model(pl.LightningModule):
         super().__init__()
         self.lr = learning_rate
         self.loss = loss
-        self.criterion = get_criterions(loss, gamma=gamma)
+        self.criterion = get_criterions(loss, gamma=gamma, alpha=alpha)
+        self.group_params = group_params
         self.optimizer_class = get_optimizer(optimizer_class)
         self.chkpt_path = chkpt_path
         self.sch_patience = sch_patience
@@ -270,23 +255,42 @@ class Model(pl.LightningModule):
         else:   
             if net == '3dresnet':
                 self.net = get_3dresnet(n_classes)
-                # print('Pretrained 3D resnet has a single input channel')
-            if net == None:
+                print('Pretrained 3D resnet has a single input channel')
+            elif net == None:
                 self.net = None
+                # print('debugging this this')
             else:
                 self.net = get_monai_net(net, in_channels, n_classes)
             
     def configure_optimizers(self):
+
+        params = list(self.named_parameters())
+        def is_head(n): return 'conv_seg' in n
+
+        # set different learning rates for the last layer
+        if self.group_params:
+            group_parameters = [{'params': [p for n, p in params if is_head(n)], 'lr': self.lr * 10},
+                                {'params': [p for n, p in params if not is_head(n)], 'lr': self.lr}]
+            parameters = group_parameters
+        else:
+            parameters = self.parameters()
+        
+        # set optimizer
         if self.optimizer_class == optim.Adam:
-            optimizer = self.optimizer_class(self.parameters(), 
+            optimizer = self.optimizer_class(parameters, 
+                                             lr=self.lr, 
+                                             weight_decay=self.weight_decay)
+        elif self.optimizer_class == optim.AdamW:
+            optimizer = self.optimizer_class(parameters, 
                                              lr=self.lr, 
                                              weight_decay=self.weight_decay)
         else:
-            optimizer = self.optimizer_class(self.parameters(), 
+            optimizer = self.optimizer_class(parameters, 
                                              lr=self.lr, 
                                              momentum=self.momentum, 
                                              weight_decay=self.weight_decay)
         
+        # set learning rate scheduler
         if self.sch_patience > 0:
             sch = ReduceLROnPlateau(optimizer, 'min',
                                     factor=0.1, patience=self.sch_patience)

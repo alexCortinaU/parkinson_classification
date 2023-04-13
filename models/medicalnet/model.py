@@ -111,5 +111,6 @@ def generate_model(opt):
                       'new_parameters': new_parameters}
 
         return model, parameters
-
+    
+    print('Non-pretrained model is created.')
     return model, model.parameters()

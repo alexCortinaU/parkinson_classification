@@ -21,7 +21,7 @@ dataset:
   map_type: 
     # - MTsat
     - R1
-    # - R2scorr
+    # - R2s_WLS1
     # - PD_R2scorr
   queue_length: 128
   samples_per_volume: 9

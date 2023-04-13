@@ -4,6 +4,7 @@ models/medicalnet/pretrain/
 lightning_logs/
 p1_ppmi_outs/
 p1_hmri_outs/
+new_p1_hmri_outs/
 occ_sens/
 p2_hmri_outs/
 reconstructions/

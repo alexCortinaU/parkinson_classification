@@ -57,9 +57,7 @@ def full_train_model(cfg):
     data.setup()
 
     # create model
-    pretrained_model = get_pretrained_model(chkpt_path=Path(cfg['model']['chkpt_path']),
-                                 input_channels=cfg['model']['in_channels'])
-    model = Model(net=pretrained_model.net, **cfg['model'])
+    model = Model(**cfg['model'])
     
     # create callbacks
     checkpoint_callback = pl.callbacks.ModelCheckpoint(save_top_k=5,
@@ -130,7 +128,7 @@ def main():
     optimizers = ['adam', 'sgd'] # , 'sgd'
     lrates = [0.01, 0.001]
     
-    exps = '4A_hMRI'
+    exps = '4C_hMRI'
     exc_times = []
     for optim in optimizers:
         for map_type in maps:  
