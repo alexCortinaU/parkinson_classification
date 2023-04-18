@@ -7,6 +7,8 @@ p1_hmri_outs/
 new_p1_hmri_outs/
 occ_sens/
 p2_hmri_outs/
+p3_ssl_hmri/
+p4_downstream_outs/
 reconstructions/
 GenerativeModels/
 # Byte-compiled / optimized / DLL files

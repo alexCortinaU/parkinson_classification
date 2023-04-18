@@ -21,6 +21,7 @@ from models.medicalnet.setting import get_def_args
 from pytorch_lightning.callbacks import Callback
 import torchvision
 from models.svae import spatialVAE
+from monai.losses import ContrastiveLoss
 
 class ComputeRE(Callback):
     def __init__(self,
@@ -63,7 +64,6 @@ class ComputeRE(Callback):
             diff = [torch.pow(self.og_img[i] - reconstructed[i], 2) for i in range(self.og_img.shape[0])]
             rerror = torch.sqrt(torch.sum(torch.stack(diff), dim=0))
             trainer.logger.experiment.add_scalar(f"RE {self.cohort}", torch.mean(rerror), global_step=trainer.global_step)
-
 class LossL1KLD(nn.Module):
 
     def __init__(self, gamma: float = 0.9):
@@ -90,7 +90,7 @@ def get_criterions(name: str, gamma: float = 0.9, alpha: float = 0.5):
     elif name == 'bin_cross_entropy':
         return nn.BCEWithLogitsLoss()
     elif name == 'focal':
-        return losses.BinaryFocalLossWithLogits(alpha=alpha)
+        return losses.BinaryFocalLossWithLogits(alpha=alpha, reduction='mean')
     elif name == 'tversky':
         return losses.TverskyLoss(0.4, 0.4)
     
@@ -216,13 +216,12 @@ def get_autoencoder(net,
         
         return net
 
-
 class Model(pl.LightningModule):
     def __init__(self,
-                    net,                  
-                    loss,
-                    learning_rate, 
-                    optimizer_class,
+                    net='3dresnet',                  
+                    loss='focal',
+                    learning_rate=0.001, 
+                    optimizer_class='adam',
                     group_params=False,
                     gamma=0.9,
                     alpha=0.5,
@@ -429,8 +428,8 @@ class Model_AE(Model):
     def forward(self, x):
         return self.net(x)
 
-
 class GenerateReconstructions(Callback):
+
     def __init__(self, input_imgs, every_n_epochs=1, split="train", vae=False):
         super().__init__()
         self.input_imgs = input_imgs  # Images to reconstruct during training
@@ -455,3 +454,171 @@ class GenerateReconstructions(Callback):
             imgs = torch.stack([input_imgs[..., slice].detach(), reconst_imgs[..., slice].detach()], dim=1).flatten(0, 1)
             grid = torchvision.utils.make_grid(imgs, nrow=2, normalize=True, range=(-1, 1))
             trainer.logger.experiment.add_image(f"Reconstructions {self.split}", grid, global_step=trainer.global_step)
+
+# Contrastive Learning and Downstream Tasks
+
+def get_net(net):
+    if net == 'resnet_monai':
+        net = monai.networks.nets.ResNet('basic', layers=[1, 1, 1, 1], block_inplanes=[64, 128, 256, 512],
+                                    spatial_dims=3, n_input_channels=1, num_classes=2)
+    return net
+
+class SimCLR(nn.Module):
+    """
+    We opt for simplicity and adopt the commonly used ResNet (He et al., 2016) to obtain hi = f(x ̃i) = ResNet(x ̃i) where hi ∈ Rd is the output after the average pooling layer.
+    """
+
+    def __init__(self, encoder, projection_dim):
+        super(SimCLR, self).__init__()
+
+        self.encoder = encoder
+        self.n_features = self.encoder.fc.in_features
+
+        # Replace the fc layer with an Identity function
+        self.encoder.fc = nn.Identity()
+
+        # We use a MLP with one hidden layer to obtain z_i = g(h_i) = W(2)σ(W(1)h_i) where σ is a ReLU non-linearity.
+        self.projector = nn.Sequential(
+            nn.Linear(self.n_features, self.n_features, bias=False),
+            nn.ReLU(),
+            nn.Linear(self.n_features, projection_dim, bias=False),
+        )
+
+    def forward(self, x_i, x_j):
+        h_i = self.encoder(x_i)
+        h_j = self.encoder(x_j)
+
+        z_i = self.projector(h_i)
+        z_j = self.projector(h_j)
+        return h_i, h_j, z_i, z_j
+
+class ContrastiveLearning(pl.LightningModule):
+
+    def __init__(self, hpdict):
+        
+        super().__init__()
+
+        self.hpdict = hpdict
+
+        # initialize ResNet
+        # self.encoder = get_net(self.hpdict['model']['net'])
+        # self.n_features = self.encoder.fc.in_features  # get dimensions of fc layer
+        self.model = SimCLR(get_net(self.hpdict['model']['net']), self.hpdict['model']['projection_dim'])
+        self.criterion = ContrastiveLoss(self.hpdict['model']['temperature'])
+
+    def forward(self, x_i, x_j):
+        h_i, h_j, z_i, z_j = self.model(x_i, x_j)
+        loss = self.criterion(z_i, z_j)
+        return loss
+
+    def training_step(self, batch, batch_idx):
+        # training_step defined the train loop. It is independent of forward
+        x_i, x_j = batch
+        loss = self.forward(x_i, x_j)
+        self.log("train_loss", 
+                 loss, on_step=False, 
+                 on_epoch=True,
+                 prog_bar=True, 
+                 logger=True, 
+                 batch_size=self.hpdict['dataset']['train_batch_size'])
+        return loss
+    
+    def validation_step(self, batch, batch_idx):
+        # training_step defined the train loop. It is independent of forward
+        x_i, x_j = batch
+        loss = self.forward(x_i, x_j)
+        self.log("val_loss", 
+                 loss, on_step=False, 
+                 on_epoch=True,
+                 prog_bar=True, 
+                 logger=True, 
+                 batch_size=self.hpdict['dataset']['train_batch_size'])
+        return loss
+
+    def configure_criterion(self):
+        # criterion = NT_Xent(self.hpdict['dataset']['batch_size'], self.hpdict['model']['temperature'])
+        criterion = ContrastiveLoss(temperature=self.hpdict['model']['temperature'])
+        return criterion
+
+    def configure_optimizers(self):
+        scheduler = None
+        if self.hpdict['model']['optimizer_class'] == "adam":
+            optimizer = torch.optim.Adam(self.model.parameters(), lr=self.hpdict['model']['learning_rate'])
+                    # "decay the learning rate with the cosine decay schedule without restarts"
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer, self.hpdict['pl_trainer']['max_epochs'], eta_min=0, last_epoch=-1
+            )
+        else:
+            raise NotImplementedError
+
+        if scheduler:
+            return {"optimizer": optimizer, "lr_scheduler": scheduler}
+        else:
+            return {"optimizer": optimizer}
+
+class ModelDownstream(Model):
+    def __init__(self, 
+                 get_encoder=None,
+                 net=None,
+                 **kwargs):
+        super().__init__(net=net, **kwargs)
+
+        self.save_hyperparameters(ignore=['net'])
+        if get_encoder is not None:
+            self.feature_extractor, n_features = get_encoder(self.net)
+        else:
+            n_features = self.net.projector[0].in_features
+            layers = list(self.net.children())[:-1]
+            self.feature_extractor = nn.Sequential(*layers)
+        
+        # self.classifier = nn.Linear(n_features, 2)
+        # nn.init.xavier_uniform_(self.classifier.weight)
+        # nn.init.zeros_(self.classifier.bias)
+
+        self.classifier = nn.Sequential(
+                            nn.Dropout(0.5),
+                            nn.Linear(n_features, 256),
+                            nn.ReLU(),
+                            nn.Linear(256, 2)
+                        )
+
+        for m in self.classifier.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                nn.init.constant_(m.bias, 0)
+    
+    def forward(self, x):
+        self.feature_extractor.eval()
+        with torch.no_grad():
+            representations = self.feature_extractor(x)
+        y_hat = self.classifier(representations)
+        return y_hat
+    
+    def training_step(self, batch, batch_idx):
+        x, y = batch
+        batch_size = len(y)
+        y_hat = self.forward(x)
+        loss = self.criterion(y_hat, y)
+        self.log("train_loss", loss, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
+        self.train_acc(y_hat, y)
+        self.train_auroc(y_hat, y)
+        self.train_f1(y_hat, y)
+        self.log("train_acc", self.train_acc, on_step=False, on_epoch=True ,prog_bar=False, logger=True, batch_size=batch_size)
+        self.log("train_auroc", self.train_auroc, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
+        self.log("train_f1", self.train_f1, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
+           
+        return loss
+    
+    def validation_step(self, batch, batch_idx):
+        x, y = batch
+        batch_size = len(y)
+        y_hat = self.forward(x)
+        loss = self.criterion(y_hat, y)
+        self.log("val_loss", loss, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
+        self.val_acc(y_hat, y)
+        self.val_auroc(y_hat, y)
+        self.val_f1(y_hat, y)
+        self.log("val_acc", self.val_acc, on_step=False, on_epoch=True ,prog_bar=False, logger=True, batch_size=batch_size)
+        self.log("val_auroc", self.val_auroc, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
+        self.log("val_f1", self.val_f1, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
+        return loss

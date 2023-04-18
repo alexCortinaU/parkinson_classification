@@ -1,0 +1,47 @@
+pl_trainer:
+  max_epochs: 150
+  devices:
+  - 0
+  accelerator: gpu
+  precision: 16
+  log_every_n_steps: 5
+
+training:
+  early_stopping:  False
+  monitor_ckpt: val_auroc # val_acc, val_f1, val_auroc
+
+dataset:
+  train_num_workers: 2
+  train_batch_size: 3
+  val_num_workers: 2
+  val_batch_size: 3
+  reshape_size: 180
+  random_state: 42
+  weighted_sampler: False
+  windowed_dataset: True
+  masked: brain_masked # brainstem_masked
+  shuffle: True
+  map_type: 
+    # - MTsat
+    # - R1
+    - R2s_WLS1
+    # - PD_R2scorr
+
+# should match arguments in the module class
+model:
+  # net: resnet_monai
+  chkpt_path: /mrhome/alejandrocu/Documents/parkinson_classification/p3_ssl_hmri/04_rs120_ssl_simclr_resnet/version_0/checkpoints/epoch=116-val_loss=tensor(0.5363, device='cuda:0').ckpt
+  # projection_dim: 64
+  # temperature: 0.5 # 0.05
+  n_classes: 2
+  in_channels: 1
+  loss: focal # dice, cross_entropy, bin_cross_entropy, focal, tversky
+  alpha: 0.35
+  optimizer_class: adam # sgd, adam, rmsprop, adamw
+  group_params: False # set different LR for classfier (fc layers, i.e. conv_seg)
+  learning_rate: 0.01
+  sch_patience: 50
+  momentum: 0 # 0.9  
+  weight_decay: 0.0001 # 0.0001    
+
+exp_name: 5A_MLP2_hMRI_R2s_WLS1_optim_adam_lr_0.01

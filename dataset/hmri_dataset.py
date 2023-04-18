@@ -16,6 +16,14 @@ import seaborn as sns
 import numpy as np
 from pytorch_lightning.loggers import TensorBoardLogger, CSVLogger
 import yaml
+from monai.data import ImageDataset
+from monai.transforms import (
+    ResizeWithPadOrCrop,
+    RandCoarseShuffle,
+    RandCoarseDropout,
+    OneOf,
+    EnsureChannelFirst, Compose, RandRotate90, Resize, ScaleIntensity
+)
 
 class HMRIDataModule(pl.LightningDataModule):
     def __init__(self, 
@@ -185,14 +193,14 @@ class HMRIDataModule(pl.LightningDataModule):
                             num_workers=self.train_num_workers,
                             sampler=sampler)
         else:
-            return DataLoader(self.train_set, 
-                            self.train_batch_size, 
+            return DataLoader(dataset=self.train_set, 
+                            batch_size=self.train_batch_size, 
                             num_workers=self.train_num_workers,
                             shuffle=self.shuffle)
 
     def val_dataloader(self):
-        return DataLoader(self.val_set, 
-                            self.val_batch_size, 
+        return DataLoader(dataset=self.val_set, 
+                            batch_size=self.val_batch_size, 
                             num_workers=self.val_num_workers,
                             shuffle=False)
 
@@ -494,3 +502,93 @@ class HMRIPDDataModule(HMRIControlsDataModule):
         locations = torch.stack([sample[tio.LOCATION] for sample in samples])
 
         return patches, locations, sampler, subject
+
+class HMRIDataModuleDownstream(HMRIDataModule):
+    def __init__(self,
+                md_df,
+                root_dir,
+                **kwargs):
+        super().__init__(md_df,
+                         root_dir,
+                         **kwargs)
+        
+    def get_subjects_list(self, md_df):
+
+        subjects_list = []
+        subjects_labels = []
+        md_df.reset_index(inplace=True, drop=True)
+
+        for i in range(len(md_df)):
+
+            # select the correct folder of masked volumes
+            subj_dir = self.root_dir / md_df['id'][i] / 'Results' / self.masked
+            subj_dir.exists()
+            # get all windowed nifti volumes
+            hmri_files = sorted(list(subj_dir.glob('*_w.nii')), key=lambda x: x.stem)
+
+            # get only maps of interest
+            hmri_files = [x for x in hmri_files if any(sub in x.stem for sub in self.map_type)]
+
+            subjects_list.append(str(hmri_files[0]))
+            subjects_labels.append(nn.functional.one_hot(torch.tensor(md_df['group'][i]), num_classes=2).float())
+
+        return subjects_list, subjects_labels
+    
+    def prepare_data(self):
+
+        subjs_to_drop = ['sub-058', 'sub-016']
+        # if self.brain_masked:
+        #     subjs_to_drop.append('sub-025')
+
+        for drop_id in subjs_to_drop:
+            self.md_df.drop(self.md_df[self.md_df.id == drop_id].index, inplace=True)
+        self.md_df.reset_index(drop=True, inplace=True)
+        print(f'Drop subjects {subjs_to_drop}')
+
+        self.md_df_train, self.md_df_val = train_test_split(self.md_df, test_size=self.test_split, 
+                                                            random_state=42, stratify=self.md_df.loc[:, 'group'].values)
+        # self.md_df_train, self.md_df_val = train_test_split(md_df_train_, test_size=0.25,
+        #                                         random_state=self.random_state, stratify=md_df_train_.loc[:, 'group'].values)
+                                                
+        self.train_subjects, self.labels_train = self.get_subjects_list(self.md_df_train)
+        self.val_subjects, self.labels_val = self.get_subjects_list(self.md_df_val)
+
+    def get_preprocessing_transform(self):
+
+        preprocess = Compose([
+                # LoadImage(),
+                EnsureChannelFirst(),
+                ScaleIntensity(minv=0, maxv=1),
+                ResizeWithPadOrCrop(self.reshape_size, mode='minimum')
+            ]
+        )
+        return preprocess
+    
+    def set_augmentation_transform(self):
+
+        # If no augmentation is specified, use the default one
+        if self.augment == None:
+            self.augment = Compose([
+                                    OneOf(
+                                        transforms=[
+                                        RandCoarseDropout(prob=1.0, holes=10, spatial_size=5, dropout_holes=True, max_spatial_size=32),
+                                        RandCoarseDropout(prob=1.0, holes=15, spatial_size=20, dropout_holes=False, max_spatial_size=64),
+                                        ]
+                                    ),
+                                    RandCoarseShuffle(prob=0.8, holes=20, spatial_size=20)
+                                ]
+                            )
+            
+    def setup(self, stage=None):
+        
+        # Assign train/val datasets for use in dataloaders
+        self.preprocess = self.get_preprocessing_transform()
+        self.set_augmentation_transform()
+        self.transform = Compose([self.preprocess, self.augment])
+
+        self.train_set = ImageDataset(image_files=self.train_subjects, 
+                                      transform=self.transform,
+                                      labels=self.labels_train)
+        self.val_set = ImageDataset(image_files=self.val_subjects,
+                                    transform=self.preprocess,
+                                    labels=self.labels_val)

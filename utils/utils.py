@@ -137,6 +137,7 @@ def get_pretrained_model(chkpt_path: Path, input_channels: int = 4):
                                         stride=(2, 2, 2), 
                                         padding=(3, 3, 3), 
                                         bias=False)
+            print('Model loaded and first layer replaced')
             return model
         else:
             return model
