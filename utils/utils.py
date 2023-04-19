@@ -197,19 +197,19 @@ def get_bounding_box_of_segmentation(binary_mask: np.ndarray):
     x_max, y_max, z_max = bounding_box.max(axis=0)
     return x_min, x_max, y_min, y_max, z_min, z_max
 
-def crop_img(img: np.ndarray, return_dims: bool = False):
+def crop_img(img: np.ndarray, return_dims: bool = False, margin: int = 10):
     """
     Crop an image to its bounding box
     """
     # get bounding box
     x_min, x_max, y_min, y_max, z_min, z_max = get_bounding_box_of_segmentation(img)
     # crop with extra margin
-    x_min = max(0, x_min - 10)
-    x_max = min(img.shape[0], x_max + 10)
-    y_min = max(0, y_min - 10)
-    y_max = min(img.shape[1], y_max + 10)
-    z_min = max(0, z_min - 10)
-    z_max = min(img.shape[2], z_max + 10)
+    x_min = max(0, x_min - margin)
+    x_max = min(img.shape[0], x_max + margin)
+    y_min = max(0, y_min - margin)
+    y_max = min(img.shape[1], y_max + margin)
+    z_min = max(0, z_min - margin)
+    z_max = min(img.shape[2], z_max + margin)
 
     if return_dims:
         return x_min, x_max, y_min, y_max, z_min, z_max

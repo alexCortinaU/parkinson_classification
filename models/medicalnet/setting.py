@@ -13,14 +13,14 @@ def get_def_args():
     args.learning_rate = 0.001
     args.num_workers = 4
     args.batch_size = 1
-    args.phase = 'test' #'train'
+    args.phase = 'train' #'test', for versions 4C and 6C
     args.save_intervals = 10
     args.n_epochs = 200
     args.input_D = 56
     args.input_H = 448
     args.input_W = 448
     args.resume_path = ''
-    args.pretrain_path = False # 'pretrain/resnet_10_23dataset.pth'
+    args.pretrain_path = 'pretrain/resnet_10_23dataset.pth' # False, for versions 4C and 6C
     args.new_layer_names = ['conv_seg']
     args.no_cuda = False
     args.gpu_id = [0]

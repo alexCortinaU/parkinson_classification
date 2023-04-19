@@ -556,24 +556,41 @@ class ContrastiveLearning(pl.LightningModule):
         else:
             return {"optimizer": optimizer}
 
+class ClassifierSimCLR(nn.Module):
+    def __init__(self, net, num_classes):
+        super().__init__()
+
+        n_features = net.projector[0].in_features
+        self.feature_extractor = nn.Sequential(*list(net.children())[:-1])
+
+        self.classifier = nn.Sequential(
+                            nn.Dropout(0.5),
+                            nn.Linear(n_features, 256),
+                            nn.ReLU(),
+                            nn.Linear(256, 2)
+                        )
+        
+        for m in self.classifier.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                nn.init.constant_(m.bias, 0)
+
+    def forward(self, x):
+        x = self.feature_extractor(x)
+        x = self.classifier(x)
+        return x
+    
 class ModelDownstream(Model):
     def __init__(self, 
-                 get_encoder=None,
                  net=None,
                  **kwargs):
         super().__init__(net=net, **kwargs)
 
-        self.save_hyperparameters(ignore=['net'])
-        if get_encoder is not None:
-            self.feature_extractor, n_features = get_encoder(self.net)
-        else:
-            n_features = self.net.projector[0].in_features
-            layers = list(self.net.children())[:-1]
-            self.feature_extractor = nn.Sequential(*layers)
-        
-        # self.classifier = nn.Linear(n_features, 2)
-        # nn.init.xavier_uniform_(self.classifier.weight)
-        # nn.init.zeros_(self.classifier.bias)
+        # self.save_hyperparameters(ignore=['net'])
+
+        n_features = self.net.projector[0].in_features
+        layers = list(self.net.children())[:-1]
+        self.feature_extractor = nn.Sequential(*layers)
 
         self.classifier = nn.Sequential(
                             nn.Dropout(0.5),
@@ -586,28 +603,49 @@ class ModelDownstream(Model):
             if isinstance(m, nn.Linear):
                 nn.init.xavier_uniform_(m.weight)
                 nn.init.constant_(m.bias, 0)
-    
+
+    def configure_optimizers(self):
+        # set optimizer
+        if self.optimizer_class == optim.Adam:
+            optimizer = self.optimizer_class(filter(lambda p: p.requires_grad, self.parameters()), 
+                                             lr=self.lr, 
+                                             weight_decay=self.weight_decay)
+        else:
+            optimizer = self.optimizer_class(filter(lambda p: p.requires_grad, self.parameters()), 
+                                             lr=self.lr, 
+                                             momentum=self.momentum, 
+                                             weight_decay=self.weight_decay)
+        
+        # set learning rate scheduler
+        if self.sch_patience > 0:
+            sch = ReduceLROnPlateau(optimizer, 'min',
+                                    factor=0.1, patience=self.sch_patience)
+            #learning rate scheduler
+            return {"optimizer": optimizer,
+                    "lr_scheduler": {"scheduler": sch,
+                                    "monitor":"val_loss"}}
+        else:
+            return optimizer
+        
     def forward(self, x):
-        self.feature_extractor.eval()
-        with torch.no_grad():
-            representations = self.feature_extractor(x)
-        y_hat = self.classifier(representations)
-        return y_hat
-    
+            x = self.feature_extractor(x)
+            y_hat = self.classifier(x)
+            return y_hat
+
     def training_step(self, batch, batch_idx):
-        x, y = batch
-        batch_size = len(y)
-        y_hat = self.forward(x)
-        loss = self.criterion(y_hat, y)
-        self.log("train_loss", loss, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
-        self.train_acc(y_hat, y)
-        self.train_auroc(y_hat, y)
-        self.train_f1(y_hat, y)
-        self.log("train_acc", self.train_acc, on_step=False, on_epoch=True ,prog_bar=False, logger=True, batch_size=batch_size)
-        self.log("train_auroc", self.train_auroc, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
-        self.log("train_f1", self.train_f1, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
-           
-        return loss
+            x, y = batch
+            batch_size = len(y)
+            y_hat = self.forward(x)
+            loss = self.criterion(y_hat, y)
+            self.log("train_loss", loss, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
+            self.train_acc(y_hat, y)
+            self.train_auroc(y_hat, y)
+            self.train_f1(y_hat, y)
+            self.log("train_acc", self.train_acc, on_step=False, on_epoch=True ,prog_bar=False, logger=True, batch_size=batch_size)
+            self.log("train_auroc", self.train_auroc, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
+            self.log("train_f1", self.train_f1, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
+            
+            return loss
     
     def validation_step(self, batch, batch_idx):
         x, y = batch
@@ -622,3 +660,71 @@ class ModelDownstream(Model):
         self.log("val_auroc", self.val_auroc, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
         self.log("val_f1", self.val_f1, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
         return loss
+
+# class ModelDownstream(Model):
+#     def __init__(self, 
+#                  get_encoder=None,
+#                  net=None,
+#                  **kwargs):
+#         super().__init__(net=net, **kwargs)
+
+#         self.save_hyperparameters(ignore=['net'])
+#         if get_encoder is not None:
+#             self.feature_extractor, n_features = get_encoder(self.net)
+#         else:
+#             n_features = self.net.projector[0].in_features
+#             layers = list(self.net.children())[:-1]
+#             self.feature_extractor = nn.Sequential(*layers)
+        
+#         # self.classifier = nn.Linear(n_features, 2)
+#         # nn.init.xavier_uniform_(self.classifier.weight)
+#         # nn.init.zeros_(self.classifier.bias)
+
+#         self.classifier = nn.Sequential(
+#                             nn.Dropout(0.5),
+#                             nn.Linear(n_features, 256),
+#                             nn.ReLU(),
+#                             nn.Linear(256, 2)
+#                         )
+
+#         for m in self.classifier.modules():
+#             if isinstance(m, nn.Linear):
+#                 nn.init.xavier_uniform_(m.weight)
+#                 nn.init.constant_(m.bias, 0)
+    
+#     def forward(self, x):
+#         self.feature_extractor.eval()
+#         with torch.no_grad():
+#             representations = self.feature_extractor(x)
+#         y_hat = self.classifier(representations)
+#         return y_hat
+    
+#     def training_step(self, batch, batch_idx):
+#         x, y = batch
+#         batch_size = len(y)
+#         y_hat = self.forward(x)
+#         loss = self.criterion(y_hat, y)
+#         self.log("train_loss", loss, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
+#         self.train_acc(y_hat, y)
+#         self.train_auroc(y_hat, y)
+#         self.train_f1(y_hat, y)
+#         self.log("train_acc", self.train_acc, on_step=False, on_epoch=True ,prog_bar=False, logger=True, batch_size=batch_size)
+#         self.log("train_auroc", self.train_auroc, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
+#         self.log("train_f1", self.train_f1, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
+           
+#         return loss
+    
+#     def validation_step(self, batch, batch_idx):
+#         x, y = batch
+#         batch_size = len(y)
+#         y_hat = self.forward(x)
+#         loss = self.criterion(y_hat, y)
+#         self.log("val_loss", loss, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
+#         self.val_acc(y_hat, y)
+#         self.val_auroc(y_hat, y)
+#         self.val_f1(y_hat, y)
+#         self.log("val_acc", self.val_acc, on_step=False, on_epoch=True ,prog_bar=False, logger=True, batch_size=batch_size)
+#         self.log("val_auroc", self.val_auroc, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
+#         self.log("val_f1", self.val_f1, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
+#         return loss
+

@@ -24,11 +24,30 @@ from utils.utils import get_pretrained_model
 from monai.transforms import Compose, RandAffine, RandAdjustContrast
 this_path = Path().resolve()
 
-def main():
+from pytorch_lightning.callbacks import BaseFinetuning
 
-    with open('./config/config_downstream.yaml', 'r') as f:
-            cfg = list(yaml.load_all(f, yaml.SafeLoader))[0]
+class FeatureExtractorFreezeUnfreeze(BaseFinetuning):
+    def __init__(self, unfreeze_at_epoch=10):
+        super().__init__()
+        self._unfreeze_at_epoch = unfreeze_at_epoch
 
+    def freeze_before_training(self, pl_module):
+        # freeze any module you want
+        # Here, we are freezing `feature_extractor`
+        self.freeze(pl_module.feature_extractor)
+
+    def finetune_function(self, pl_module, current_epoch, optimizer, opt_idx):
+        # When `current_epoch` is 10, feature_extractor will start training.
+        if current_epoch == self._unfreeze_at_epoch:
+            self.unfreeze_and_add_param_group(
+                modules=pl_module.feature_extractor,
+                optimizer=optimizer,
+                train_bn=True,
+                initial_denom_lr=10,
+            )
+
+def full_train_model(cfg):
+    
      # Set data directory
     root_dir = Path('/mnt/projects/7TPD/bids/derivatives/hMRI_acu/derivatives/hMRI')
     md_df = pd.read_csv(this_path/'bids_3t.csv')
@@ -62,6 +81,9 @@ def main():
         exp_cfg = list(yaml.load_all(f, yaml.SafeLoader))[0]
 
     pretrained_model = ContrastiveLearning.load_from_checkpoint(chkpt_path, hpdict=exp_cfg)
+
+    # for downstream task, use commented ModelDownstream class in pl_model.py
+
     model = ModelDownstream(net=pretrained_model.model, **cfg['model'])
 
     # create callbacks
@@ -70,16 +92,19 @@ def main():
                                           mode="max",
                                           filename="{epoch:02d}-{val_auroc}")
     
+    finetune_callback = FeatureExtractorFreezeUnfreeze(unfreeze_at_epoch=cfg['training']['unfreeze_at_epoch'])
+    
     lr_monitor = pl.callbacks.LearningRateMonitor(logging_interval='epoch')
 
+    # early stopping doesn't work with monai's Meta tensors
     if cfg['training']['early_stopping']:
         early_stopping = pl.callbacks.early_stopping.EarlyStopping(monitor="val_loss", 
                                                                 mode='min', patience=60,
                                                                 )
-        callbacks = [checkpoint_callback, lr_monitor, early_stopping]
+        callbacks = [checkpoint_callback, finetune_callback, lr_monitor, early_stopping]
     else:
         print("---- \n ----- Early stopping is disabled \n ----")
-        callbacks = [checkpoint_callback, lr_monitor]
+        callbacks = [checkpoint_callback, finetune_callback, lr_monitor]
     
     # create loggers
     tb_logger = TensorBoardLogger(save_dir=Path('./p4_downstream_outs'),
@@ -103,7 +128,44 @@ def main():
     start = datetime.now()
     # print("Training started at", start)
     trainer.fit(model=model, datamodule=data)
-    print("Training duration:", datetime.now() - start)
+
+    del trainer
+
+    return datetime.now() - start, dump_path
+
+def main():
+
+    with open('./config/config_downstream.yaml', 'r') as f:
+            cfg = list(yaml.load_all(f, yaml.SafeLoader))[0]
+
+    # set random seed for reproducibility
+    pl.seed_everything(cfg['dataset']['random_state'],  workers=True)
+
+    maps = ['MTsat', 'R1', 'PD_R2scorr'] # 'MTsat', 'R1', 'R2s_WLS1', 'PD_R2scorr'
+    optimizers = ['adam'] # , 'sgd'
+    lrates = [0.01, 0.001]
+    unfreeze_at_epochs = [15]
+    
+    exps = '5B_hMRI'
+    exc_times = []
+    for optim in optimizers:
+        for map_type in maps:  
+            for lr in lrates:
+                for ufrz in unfreeze_at_epochs:                                           
+                    times = {}
+                    cfg['training']['unfreeze_at_epoch'] = ufrz  
+                    cfg['model']['learning_rate'] = lr
+                    cfg['model']['optimizer_class'] = optim
+                    cfg['dataset']['map_type'] = [map_type]
+                    cfg['exp_name'] = f'{exps}_{map_type}_optim_{optim}_lr_{lr}_ufrz_{ufrz}'
+
+                    exc_time, dump_path = full_train_model(cfg)   
+
+                    times['exp_name'] = cfg['exp_name']  
+                    times['time'] = exc_time    
+                    exc_times.append(times)
+        
+    pd.DataFrame(exc_times).to_csv(dump_path.parent.parent/f'{exps}_execution_times_.csv', index=False)
 
 if __name__ == "__main__":
     main()

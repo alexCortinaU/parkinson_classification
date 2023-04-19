@@ -11,6 +11,7 @@ p3_ssl_hmri/
 p4_downstream_outs/
 reconstructions/
 GenerativeModels/
+comparison/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
