@@ -43,7 +43,7 @@ model:
   gamma: 0.9
   optimizer_class: adam # 
   learning_rate: 0.001
-  sch_patience: -1
+  sch_patience: 0
   momentum: 0 # 0.9  
   weight_decay: 0 # 0.0001    
 

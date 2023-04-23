@@ -323,10 +323,7 @@ class TransformsSimCLR:
     def __call__(self, x):
         return self.train_transform(x), self.train_transform(x)
     
-def main():
-
-    with open('./config/configssl.yaml', 'r') as f:
-        cfg = list(yaml.load_all(f, yaml.SafeLoader))[0]
+def full_train(cfg):
 
     # Set data directory
     root_dir = Path('/mnt/projects/7TPD/bids/derivatives/hMRI_acu/derivatives/hMRI')
@@ -374,6 +371,40 @@ def main():
     # print("Training started at", start)
     trainer.fit(model=clmodel, datamodule=data)
     print("Training duration:", datetime.now() - start)
+
+    return datetime.now() - start, dump_path
+
+def main():
+
+    with open('./config/configssl.yaml', 'r') as f:
+        cfg = list(yaml.load_all(f, yaml.SafeLoader))[0]
+
+     # set random seed for reproducibility
+    pl.seed_everything(cfg['dataset']['random_state'],  workers=True)
+
+    maps = ['MTsat', 'R1', 'PD_R2scorr'] # 'MTsat', 'R1', 'R2s_WLS1', 'PD_R2scorr'
+    optimizers = ['adam'] # , 'sgd'
+    lrates = [0.001]
+    
+    exps = 'ssl_simclr'
+    exc_times = []
+    for optim in optimizers:
+        for map_type in maps:  
+            for lr in lrates:                                         
+                times = {}
+                cfg['model']['learning_rate'] = lr
+                cfg['model']['optimizer_class'] = optim
+                cfg['dataset']['map_type'] = [map_type]
+                cfg['exp_name'] = f'{exps}_{map_type}_optim_{optim}_lr_{lr}'
+
+                exc_time, dump_path = full_train(cfg)   
+
+                times['exp_name'] = cfg['exp_name']  
+                times['time'] = exc_time    
+                exc_times.append(times)
+        
+    pd.DataFrame(exc_times).to_csv(dump_path.parent.parent/f'{exps}_execution_times_.csv', index=False)
+
 
 if __name__ == "__main__":
     main()

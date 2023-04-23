@@ -605,13 +605,50 @@ class ModelDownstream(Model):
                 nn.init.constant_(m.bias, 0)
 
     def configure_optimizers(self):
+        # # set optimizer
+        # if self.optimizer_class == optim.Adam:
+        #     optimizer = self.optimizer_class(filter(lambda p: p.requires_grad, self.parameters()), 
+        #                                      lr=self.lr, 
+        #                                      weight_decay=self.weight_decay)
+        # else:
+        #     optimizer = self.optimizer_class(filter(lambda p: p.requires_grad, self.parameters()), 
+        #                                      lr=self.lr, 
+        #                                      momentum=self.momentum, 
+        #                                      weight_decay=self.weight_decay)
+        
+        # # set learning rate scheduler
+        # if self.sch_patience > 0:
+        #     sch = ReduceLROnPlateau(optimizer, 'min',
+        #                             factor=0.1, patience=self.sch_patience)
+        #     #learning rate scheduler
+        #     return {"optimizer": optimizer,
+        #             "lr_scheduler": {"scheduler": sch,
+        #                             "monitor":"val_loss"}}
+        # else:
+        #     return optimizer
+
+        params = list(self.named_parameters())
+        def is_head(n): return 'classifier' in n
+
+        # set different learning rates for the last layer
+        if self.group_params:
+            group_parameters = [{'params': [p for n, p in params if is_head(n)], 'lr': self.lr * 10},
+                                {'params': [p for n, p in params if not is_head(n)], 'lr': self.lr}]
+            parameters = group_parameters
+        else:
+            parameters = self.parameters()
+        
         # set optimizer
         if self.optimizer_class == optim.Adam:
-            optimizer = self.optimizer_class(filter(lambda p: p.requires_grad, self.parameters()), 
+            optimizer = self.optimizer_class(parameters, 
+                                             lr=self.lr, 
+                                             weight_decay=self.weight_decay)
+        elif self.optimizer_class == optim.AdamW:
+            optimizer = self.optimizer_class(parameters, 
                                              lr=self.lr, 
                                              weight_decay=self.weight_decay)
         else:
-            optimizer = self.optimizer_class(filter(lambda p: p.requires_grad, self.parameters()), 
+            optimizer = self.optimizer_class(parameters, 
                                              lr=self.lr, 
                                              momentum=self.momentum, 
                                              weight_decay=self.weight_decay)

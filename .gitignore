@@ -12,6 +12,7 @@ p4_downstream_outs/
 reconstructions/
 GenerativeModels/
 comparison/
+p6_hmri_outs/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

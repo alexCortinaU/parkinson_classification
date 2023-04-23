@@ -78,12 +78,12 @@ def full_train_model(cfg):
         callbacks = [checkpoint_callback, lr_monitor]
 
     # create loggers
-    tb_logger = TensorBoardLogger(save_dir=Path('./new_p1_hmri_outs'),
+    tb_logger = TensorBoardLogger(save_dir=Path('./p6_hmri_outs'),
                                name=cfg['exp_name'],
                                version=0
                                )
     
-    csv_logger = CSVLogger(save_dir=Path('./new_p1_hmri_outs'),
+    csv_logger = CSVLogger(save_dir=Path('./p6_hmri_outs'),
                             flush_logs_every_n_steps=10,
                             name=cfg['exp_name'],
                             version=0
@@ -91,7 +91,7 @@ def full_train_model(cfg):
                             
     # save the config file to the output folder
     # for a given experiment
-    dump_path = Path('./new_p1_hmri_outs').resolve() / f'{cfg["exp_name"]}'
+    dump_path = Path('./p6_hmri_outs').resolve() / f'{cfg["exp_name"]}'
     dump_path.mkdir(parents=True, exist_ok=True)
     dump_path = dump_path/'config_dump.yml'
     with open(dump_path, 'w') as f:
@@ -110,3 +110,43 @@ def full_train_model(cfg):
     del trainer
 
     return datetime.now() - start, dump_path
+
+def main():
+
+    print('-------\n HPT-2\n-------')
+    # read the config file
+    with open('config/config_brainstem.yaml', 'r') as f:
+        cfg = list(yaml.load_all(f, yaml.SafeLoader))[0]
+
+    # set random seed for reproducibility
+    pl.seed_everything(cfg['dataset']['random_state'],  workers=True)
+
+    # parameters to tune
+    # psizes = [96, 128]
+    # lrates = [0.008, 0.001]
+
+    maps = ['MTsat', 'R1', 'R2s_WLS1', 'PD_R2scorr'] # 'MTsat', 'R1', 'R2s_WLS1', 'PD_R2scorr'
+    optimizers = ['adam', 'sgd'] # , 'sgd'
+    lrates = [0.01, 0.001]
+    
+    exps = '6A_hMRI'
+    exc_times = []
+    for optim in optimizers:
+        for map_type in maps:  
+            for lr in lrates:                         
+                times = {}
+                cfg['model']['learning_rate'] = lr
+                cfg['model']['optimizer_class'] = optim
+                cfg['dataset']['map_type'] = [map_type]
+                cfg['exp_name'] = f'{exps}_{map_type}_optim_{optim}_lr_{lr}'
+
+                exc_time, dump_path = full_train_model(cfg)   
+
+                times['exp_name'] = cfg['exp_name']  
+                times['time'] = exc_time    
+                exc_times.append(times)
+        
+    pd.DataFrame(exc_times).to_csv(dump_path.parent.parent/f'{exps}_execution_times_.csv', index=False)
+
+if __name__ == "__main__":
+    main()

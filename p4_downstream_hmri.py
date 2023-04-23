@@ -92,7 +92,7 @@ def full_train_model(cfg):
                                           mode="max",
                                           filename="{epoch:02d}-{val_auroc}")
     
-    finetune_callback = FeatureExtractorFreezeUnfreeze(unfreeze_at_epoch=cfg['training']['unfreeze_at_epoch'])
+    # finetune_callback = FeatureExtractorFreezeUnfreeze(unfreeze_at_epoch=cfg['training']['unfreeze_at_epoch'])
     
     lr_monitor = pl.callbacks.LearningRateMonitor(logging_interval='epoch')
 
@@ -101,10 +101,10 @@ def full_train_model(cfg):
         early_stopping = pl.callbacks.early_stopping.EarlyStopping(monitor="val_loss", 
                                                                 mode='min', patience=60,
                                                                 )
-        callbacks = [checkpoint_callback, finetune_callback, lr_monitor, early_stopping]
+        callbacks = [checkpoint_callback, lr_monitor, early_stopping] # finetune_callback,
     else:
         print("---- \n ----- Early stopping is disabled \n ----")
-        callbacks = [checkpoint_callback, finetune_callback, lr_monitor]
+        callbacks = [checkpoint_callback,lr_monitor] #  finetune_callback, 
     
     # create loggers
     tb_logger = TensorBoardLogger(save_dir=Path('./p4_downstream_outs'),
@@ -141,29 +141,32 @@ def main():
     # set random seed for reproducibility
     pl.seed_everything(cfg['dataset']['random_state'],  workers=True)
 
-    maps = ['MTsat', 'R1', 'PD_R2scorr'] # 'MTsat', 'R1', 'R2s_WLS1', 'PD_R2scorr'
+    maps = ['R2s_WLS1', 'MTsat', 'R1', 'PD_R2scorr'] # 'MTsat', 'R1', 'R2s_WLS1', 'PD_R2scorr'
     optimizers = ['adam'] # , 'sgd'
     lrates = [0.01, 0.001]
-    unfreeze_at_epochs = [15]
+    # unfreeze_at_epochs = [15]
+    chckpt_paths = {'R2s_WLS1': "/mrhome/alejandrocu/Documents/parkinson_classification/p3_ssl_hmri/rs120_ssl_simclr_resnet_DA02_bs5_v2epochs400/version_0/checkpoints/epoch=326-val_loss=tensor(0.8306, device='cuda:0').ckpt",
+                    'MTsat': "/mrhome/alejandrocu/Documents/parkinson_classification/p3_ssl_hmri/ssl_simclr_MTsat_optim_adam_lr_0.001/version_1/checkpoints/epoch=240-val_loss=tensor(1.0347, device='cuda:0').ckpt",
+                    'R1': "/mrhome/alejandrocu/Documents/parkinson_classification/p3_ssl_hmri/ssl_simclr_R1_optim_adam_lr_0.001/version_0/checkpoints/epoch=351-val_loss=tensor(0.8743, device='cuda:0').ckpt",
+                    'PD_R2scorr': "/mrhome/alejandrocu/Documents/parkinson_classification/p3_ssl_hmri/ssl_simclr_PD_R2scorr_optim_adam_lr_0.001/version_0/checkpoints/epoch=371-val_loss=tensor(0.5705, device='cuda:0').ckpt"}
     
-    exps = '5B_hMRI'
+    exps = '5B-2_hMRI'
     exc_times = []
     for optim in optimizers:
         for map_type in maps:  
-            for lr in lrates:
-                for ufrz in unfreeze_at_epochs:                                           
-                    times = {}
-                    cfg['training']['unfreeze_at_epoch'] = ufrz  
-                    cfg['model']['learning_rate'] = lr
-                    cfg['model']['optimizer_class'] = optim
-                    cfg['dataset']['map_type'] = [map_type]
-                    cfg['exp_name'] = f'{exps}_{map_type}_optim_{optim}_lr_{lr}_ufrz_{ufrz}'
+            for lr in lrates:                                         
+                times = {}
+                cfg['model']['chkpt_path'] = chckpt_paths[map_type]  
+                cfg['model']['learning_rate'] = lr
+                cfg['model']['optimizer_class'] = optim
+                cfg['dataset']['map_type'] = [map_type]
+                cfg['exp_name'] = f'{exps}_{map_type}_optim_{optim}_lr_{lr}'
 
-                    exc_time, dump_path = full_train_model(cfg)   
+                exc_time, dump_path = full_train_model(cfg)   
 
-                    times['exp_name'] = cfg['exp_name']  
-                    times['time'] = exc_time    
-                    exc_times.append(times)
+                times['exp_name'] = cfg['exp_name']  
+                times['time'] = exc_time    
+                exc_times.append(times)
         
     pd.DataFrame(exc_times).to_csv(dump_path.parent.parent/f'{exps}_execution_times_.csv', index=False)
 
