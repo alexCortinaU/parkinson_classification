@@ -55,7 +55,6 @@ def full_train_model(cfg):
     hc_number = len(md_df.loc[md_df.group == 0, :])
     print(f'------------\n Data - PD: {pd_number}, HC: {hc_number}')
 
-    # create PPMI dataset
     augmentations = Compose([
                         RandAffine(
                             rotate_range=((-np.pi/12, np.pi/12), 0, (-np.pi/12, np.pi/12)), 

@@ -13,6 +13,7 @@ reconstructions/
 GenerativeModels/
 comparison/
 p6_hmri_outs/
+xai_outs/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

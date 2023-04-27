@@ -25,11 +25,12 @@ from models.pl_model import Model
 def save_nifti_from_array(subj_id: str,
                           arr: np.ndarray, 
                           path: Path):
-    """
+    """subj_id = df.iloc[subj_idx]['id']
+    print(f'Predicting for subject {subj_id} (with target {target.cpu().numpy()}')
     Save a nifti file from a numpy array and data from original nifti
     """
     img_name = f'{subj_id}_ses-01prisma3t_echo-01_part-magnitude-acq-MToff_MPM_MTsat_w.nii'
-    img = nib.load(Path(f'/mnt/scratch/7TPD/mpm_run_acu/bids/derivatives/hMRI/{subj_id}/Results') 
+    img = nib.load(Path(f'/mnt/projects/7TPD/bids/derivatives/hMRI_acu/derivatives/hMRI/{subj_id}/Results') 
                    / img_name)
     nifti = nib.Nifti1Image(arr, img.affine, img.header)
     nib.save(nifti, path)

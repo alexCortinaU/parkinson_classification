@@ -53,6 +53,7 @@ def full_train_model(cfg):
                         root_dir=root_dir,
                         augment=augmentations,
                         **cfg['dataset'])
+    
     data.prepare_data()
     data.setup()
 
