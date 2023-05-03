@@ -11,6 +11,7 @@ from datetime import datetime
 import os
 import json
 import numpy as np
+import monai
 import copy
 from matplotlib.colors import LinearSegmentedColormap
 from utils.utils import save_nifti_from_array
@@ -25,6 +26,7 @@ from captum.attr import GradientShap
 from captum.attr import Occlusion
 from captum.attr import NoiseTunnel
 from captum.attr import LRP
+from captum.attr import Saliency
 
 
 import yaml
@@ -33,10 +35,19 @@ from models.pl_model import Model, ContrastiveLearning, ModelDownstream
 from utils.utils import get_pretrained_model
 this_path = Path().resolve()
 
+class SoftmaxedModel(torch.nn.Module):
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+        self.softmax = torch.nn.Softmax(dim=1)
+
+    def forward(self, x):
+        return self.softmax(self.model(x))
+
 def obtain_xai_maps(subj_idx: int, 
                     ckpt_path: Path,
                     save_img: bool = True, 
-                    occlusion_att: str = 'ps10_stride5', 
+                    occlusion_att: str = 'ps5_stride3', 
                     grad_based_att: str = 'IntegratedGradients', 
                     n_steps: int = 200):
 
@@ -55,24 +66,24 @@ def obtain_xai_maps(subj_idx: int,
     with open(exp_dir /'config_dump.yml', 'r') as f:
         cfg = list(yaml.load_all(f, yaml.SafeLoader))[0]
 
-    map_type = cfg['dataset']['map_type']
+    map_type = cfg['dataset']['map_type'][0]
     print(f'Using {map_type} maps')
 
-    if map_type[0] in ['R2_WLS1', 'PD_R2scorr']:
+    if map_type in ['R2s_WLS1', 'PD_R2scorr']:
         root_dir = Path('/mnt/projects/7TPD/bids/derivatives/hMRI_acu/derivatives/hMRI')
         md_df = pd.read_csv(this_path/'bids_3t.csv')
         data = HMRIDataModule(md_df=md_df, root_dir=root_dir, **cfg['dataset']) #shuffle=False
 
         # loading model from checkpoint
         model = Model.load_from_checkpoint(ckpt_path, **cfg['model'])
-        network = copy.deepcopy(model.net)
+        network = copy.deepcopy(model.net) # SoftmaxedModel(
         network.eval()
         # create dataset
         data.prepare_data()
         data.setup()
         input, target = data.val_set[subj_idx]['image'][tio.DATA], data.val_set[subj_idx]['label']
 
-    elif map_type[0] in ['R1', 'MTsat']:
+    elif map_type in ['R1', 'MTsat']:
         root_dir = Path('/mnt/projects/7TPD/bids/derivatives/hMRI_acu/derivatives/hMRI')
         md_df = pd.read_csv(this_path/'bids_3t.csv')
         
@@ -107,26 +118,41 @@ def obtain_xai_maps(subj_idx: int,
     with torch.no_grad():
         output = network(input)
         # print(f"model's logits output: {output}")
+        print(f"Models output: {output}")
     output = F.softmax(output, dim=1)
     prediction_score, pred_label_idx = torch.topk(output, 1)
-    # print(pred_label_idx, prediction_score)
+    print(pred_label_idx, prediction_score)
 
     # occlusion
     if occlusion_att is not None:
         print('Performing Occlusion Sensitivity')
-        occlusion = Occlusion(network)
         start = datetime.now()
+        # Captum
+        occlusion = Occlusion(network)
+        
         attributions_occ = occlusion.attribute(input,
-                                            strides = (1, 5, 5, 5),
+                                            strides = (1, 3, 3, 3),
                                             target=pred_label_idx,
-                                            sliding_window_shapes=(1, 10, 10, 10),
+                                            sliding_window_shapes=(1, 5, 5, 5),
                                             baselines=0)
+
+        # # Monai
+        # occ_sens = monai.visualize.OcclusionSensitivity(nn_module=network, 
+        #                                             mask_size=10, 
+        #                                             n_batch=20, 
+        #                                             overlap=0.5)
+        # occ_result, _ = occ_sens(x=input)
         print('___________________\n')
         print(f'Occlusion attribution took {datetime.now() - start}')
-        # save the results
+
+        
         out_dir = Path(f'/mrhome/alejandrocu/Documents/parkinson_classification/xai_outs/{subj_id}/occ_sens') / Path(ckpt_path).parent.parent.parent.name
         out_dir.mkdir(parents=True, exist_ok=True)
 
+        # save the results for Monai map
+        # save_nifti_from_array(subj_id=subj_id,
+        #                         arr=occ_result[0, target.argmax().item()].cpu().detach().numpy(), 
+        #                         path=out_dir / f'{subj_id}_{map_type}_{occlusion_att}_occ_result_logits.nii.gz')
         if save_img:
             # save the images for visualization
             save_nifti_from_array(subj_id=subj_id,
@@ -135,14 +161,28 @@ def obtain_xai_maps(subj_idx: int,
             save_nifti_from_array(subj_id=subj_id,
                                     arr=input[0, 0].cpu().detach().numpy(),
                                     path=out_dir / f'{subj_id}_{map_type}_{occlusion_att}_og_img.nii.gz')
-            print(f'-------------- \n Images saved to {out_dir}')
-        del occlusion
-        del attributions_occ
+        print(f'-------------- \n Images saved to {out_dir}')
+        # del occlusion
+        # del attributions_occ
 
     # integrated gradients
     if grad_based_att is not None:
         print('Performing Gradient Based Attribution')
         start = datetime.now()
+
+        # # saliency
+        # saliency = Saliency(network)
+        # attributions_saliency = saliency.attribute(input, target=pred_label_idx)
+        # # save the results
+        # out_dir = Path(f'/mrhome/alejandrocu/Documents/parkinson_classification/xai_outs/{subj_id}/grad_based') / Path(ckpt_path).parent.parent.parent.name
+        # out_dir.mkdir(parents=True, exist_ok=True)
+
+        # if save_img:
+        #     # save the images for visualization
+        #     save_nifti_from_array(subj_id=subj_id,
+        #                         arr=attributions_saliency[0, 0].cpu().detach().numpy(), 
+        #                         path=out_dir / f'{subj_id}_{map_type}_{grad_based_att}_result.nii.gz') #n_step{n_steps}
+        #     print(f'-------------- \n Images saved to {out_dir}')
 
         if 'Integrated' in grad_based_att:
             print('Performing Integrated Gradients')
@@ -173,7 +213,7 @@ def obtain_xai_maps(subj_idx: int,
                 # save the images for visualization
                 save_nifti_from_array(subj_id=subj_id,
                                     arr=attributions_ig[0, 0].cpu().detach().numpy(), 
-                                    path=out_dir / f'{subj_id}_{map_type}_{grad_based_att}_ig_n_steps_{n_steps}_result.nii.gz') #n_step{n_steps}
+                                    path=out_dir / f'{subj_id}_{map_type}_{grad_based_att}_nsteps_{n_steps}_result.nii.gz') #n_step{n_steps}
                 print(f'-------------- \n Images saved to {out_dir}')
             del integrated_gradients
             del attributions_ig
@@ -207,12 +247,12 @@ def obtain_xai_maps(subj_idx: int,
 
 def main():
 
-    idxs = [1, 4, 6, 9, 11]
+    idxs = [0, 1, 2, 3, 7] # 6, 8, 9, 10, 11, 12, 13
     maps = {
-        # 'R2_WLS1': Path('/mrhome/alejandrocu/Documents/parkinson_classification/new_p1_hmri_outs/4A_hMRI_R2s_WLS1_optim_adam_lr_0.01/version_0/checkpoints/epoch=60-val_auroc=0.9388.ckpt'),
-        'MTsat': Path("/mrhome/alejandrocu/Documents/parkinson_classification/p4_downstream_outs/5B_hMRI_MTsat_optim_adam_lr_0.001_ufrz_15/version_0/checkpoints/epoch=76-val_auroc=tensor(0.7832, device='cuda:0').ckpt"),
-        'R1': Path("/mrhome/alejandrocu/Documents/parkinson_classification/p4_downstream_outs/5B_hMRI_R1_optim_adam_lr_0.001_ufrz_15/version_0/checkpoints/epoch=54-val_auroc=tensor(0.8316, device='cuda:0').ckpt"),
-        'PD_R2scorr': Path("/mrhome/alejandrocu/Documents/parkinson_classification/new_p1_hmri_outs/4A_hMRI_PD_R2scorr_optim_adam_lr_0.001/version_0/checkpoints/epoch=65-val_auroc=0.8163.ckpt")
+        'R2s_WLS1': Path('/mrhome/alejandrocu/Documents/parkinson_classification/new_p1_hmri_outs/4A_hMRI_R2s_WLS1_optim_adam_lr_0.01/version_0/checkpoints/epoch=60-val_auroc=0.9388.ckpt'),
+        # 'MTsat': Path("/mrhome/alejandrocu/Documents/parkinson_classification/p4_downstream_outs/5B_hMRI_MTsat_optim_adam_lr_0.001_ufrz_15/version_0/checkpoints/epoch=76-val_auroc=tensor(0.7832, device='cuda:0').ckpt"),
+        # 'R1': Path("/mrhome/alejandrocu/Documents/parkinson_classification/p4_downstream_outs/5B_hMRI_R1_optim_adam_lr_0.001_ufrz_15/version_0/checkpoints/epoch=54-val_auroc=tensor(0.8316, device='cuda:0').ckpt"),
+        # 'PD_R2scorr': Path("/mrhome/alejandrocu/Documents/parkinson_classification/new_p1_hmri_outs/4A_hMRI_PD_R2scorr_optim_adam_lr_0.001/version_0/checkpoints/epoch=65-val_auroc=0.8163.ckpt")
     }
     for idx in idxs:
         for map_type, ckpt_path in maps.items():
@@ -221,7 +261,7 @@ def main():
             print(f'Predicting for subject {idx}, map {map_type}')
             obtain_xai_maps(subj_idx=idx, 
                             ckpt_path=ckpt_path,
-                            grad_based_att=None,
+                            grad_based_att='IntegratedGrads',
                             save_img=True)
 
 if __name__ == "__main__":
