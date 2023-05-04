@@ -101,14 +101,14 @@ def full_train_model(cfg):
     #     print("---- \n ----- Early stopping is disabled \n ----")
 
     # create loggers
-    tb_logger = TensorBoardLogger(save_dir=Path('./p2_hmri_outs/hp_tuning'),
+    tb_logger = TensorBoardLogger(save_dir=Path('./p2_hmri_outs'),
                                name=cfg['exp_name'],
                                version=0
                                )
                             
     # save the config file to the output folder
     # for a given experiment
-    dump_path = Path('./p2_hmri_outs/hp_tuning').resolve() / f'{cfg["exp_name"]}'
+    dump_path = Path('./p2_hmri_outs').resolve() / f'{cfg["exp_name"]}'
     dump_path.mkdir(parents=True, exist_ok=True)
     dump_path = dump_path/'config_dump.yml'
     with open(dump_path, 'w') as f:
@@ -131,7 +131,7 @@ def full_train_model(cfg):
     trainer.fit(model=model, datamodule=data)
     print("Training duration:", datetime.now() - start)
     del trainer
-    return model, data, data_pd, datetime.now() - start, dump_path.parent
+    return model, data, data_pd, datetime.now() - start, dump_path
 
 def compute_recons(model, data_hc, data_pd, out_dir, ovlap=6, vae=False):
     re_all = []
@@ -184,7 +184,7 @@ def main():
 
     print('-------\n HPT-2\n-------')
     # read the config file
-    with open('config_patches.yaml', 'r') as f:
+    with open('config/config_patches.yaml', 'r') as f:
         cfg = list(yaml.load_all(f, yaml.SafeLoader))[0]
     
     # set random seed for reproducibility
@@ -194,30 +194,34 @@ def main():
     # psizes = [96, 128]
     # lrates = [0.008, 0.001]
 
-    maps = ['MTsat', 'R1', 'R2scorr', 'PD_R2scorr']
-    gammas = [0.9, 0.95]
+    maps = ['MTsat', 'R1', 'R2s_WLS1', 'PD_R2scorr']
+    gammas = [0.95]
+
+    model_net = 'autoencoder'
 
     exc_times = []
+    exps = f'normative_{model_net}'
     for gamma in gammas:
         for map_type in maps: 
             times = {}   
             cfg['model']['gamma'] = gamma
+            cfg['model']['net'] = model_net
             # cfg['dataset']['patch_size'] = ps
             cfg['dataset']['map_type'] = [map_type]
-            cfg['exp_name'] = f'pd_hmri_svae_{map_type}_gamma_{gamma}'
+            cfg['exp_name'] = f'{exps}_{map_type}' #_gamma_{gamma}'
             model, data_hc, data_pd, exc_time, dump_path = full_train_model(cfg)
-            # load model from checkpoint
-            last_ckpt_path = dump_path/'version_0'/ 'checkpoints'/ 'last.ckpt'
-            model = Model_AE.load_from_checkpoint(last_ckpt_path, **cfg['model'])
-            model = model.to('cuda')
-            model.eval()
-            compute_recons(model, data_hc, data_pd, dump_path, vae=True)
+            # # load model from checkpoint
+            # last_ckpt_path = dump_path/'version_0'/ 'checkpoints'/ 'last.ckpt'
+            # model = Model_AE.load_from_checkpoint(last_ckpt_path, **cfg['model'])
+            # model = model.to('cuda')
+            # model.eval()
+            # compute_recons(model, data_hc, data_pd, dump_path, vae=True)
             del model, data_hc, data_pd
             times['exp_name'] = cfg['exp_name']  
             times['time'] = exc_time    
             exc_times.append(times)
     
-    pd.DataFrame(exc_times).to_csv(dump_path.parent/'svae_execution_times_.csv', index=False)
+    pd.DataFrame(exc_times).to_csv(dump_path.parent/f'{exps}_sae_execution_times_.csv', index=False)
 
 if __name__ == '__main__':
     main()

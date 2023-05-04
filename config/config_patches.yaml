@@ -21,18 +21,18 @@ dataset:
   map_type: 
     # - MTsat
     - R1
-    # - R2scorr
+    # - R2s_WLS1
     # - PD_R2scorr
   queue_length: 128
   samples_per_volume: 9
   random_state: 42
   windowed_dataset: True
-  brain_masked: True
+  masked: brain_masked # brainstem_masked
   shuffle: True
 
 # should match arguments in the module class
 model:
-  net: svae # vae, svae, vqvae, autoencoder
+  net: autoencoder # vae, svae, vqvae, autoencoder
   channels:
     - 32
     - 64
@@ -41,7 +41,7 @@ model:
     # - 512
   latent_size: 128
   in_channels: 1
-  loss: l1kld # l1, mse, l1kld
+  loss: l1 # l1, mse, l1kld
   gamma: 0.9
   optimizer_class: adam # sgd, adam, rmsprop
   learning_rate: 0.001

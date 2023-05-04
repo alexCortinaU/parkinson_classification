@@ -21,6 +21,7 @@ from models.medicalnet.setting import get_def_args
 from pytorch_lightning.callbacks import Callback
 import torchvision
 from models.svae import spatialVAE
+from GenerativeModels.generative.networks.nets import VQVAE
 
 # class ReconstructionError(torchmetrics.Metric):
 #     def __init__(self, maps: list, **kwargs):
@@ -232,6 +233,22 @@ def get_autoencoder(net,
                 bias=True,
                 use_sigmoid=True)
         
+        return net
+
+    elif net == 'vqvae':
+        net = VQVAE(
+                spatial_dims=3,
+                in_channels=1,
+                out_channels=1,
+                num_res_layers=2,
+                downsample_parameters=((2, 3, 1, 1), (2, 3, 1, 1)),
+                upsample_parameters=((2, 3, 1, 1, 0), (2, 3, 1, 1, 0)),
+                num_channels=(96, 96),
+                num_res_channels=(96, 96),
+                num_embeddings=256,
+                embedding_dim=32,
+                )
+
         return net
 
 
