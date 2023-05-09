@@ -21,6 +21,7 @@ from models.medicalnet.setting import get_def_args
 from pytorch_lightning.callbacks import Callback
 import torchvision
 from models.svae import spatialVAE
+from monai.networks.layers import Act
 from GenerativeModels.generative.networks.nets import VQVAE
 
 # class ReconstructionError(torchmetrics.Metric):
@@ -58,7 +59,7 @@ class ComputeRE(Callback):
                  subject,
                  every_n_epochs=1,
                  cohort="control",
-                 vae=False):
+                 ae_type='vae'):
         super().__init__()
         self.input_imgs = input_imgs  # Images to reconstruct during training
         # Only save those images every N epochs (otherwise tensorboard gets quite large)
@@ -66,7 +67,7 @@ class ComputeRE(Callback):
         self.sampler = sampler
         self.every_n_epochs = every_n_epochs
         self.cohort = cohort
-        self.vae = vae
+        self.ae_type = ae_type
         self.aggregator = tio.data.GridAggregator(sampler)
         self.og_img = subject['image'][tio.DATA]
 
@@ -77,8 +78,10 @@ class ComputeRE(Callback):
             input_imgs = self.input_imgs.to(pl_module.device)
             with torch.no_grad():
                 pl_module.eval()
-                if self.vae:
+                if self.ae_type == 'vae':
                     reconst_imgs, _, _, _ = pl_module(input_imgs)
+                elif self.ae_type == 'vqvae':
+                    reconst_imgs, _ = pl_module(input_imgs)
                 else:
                     reconst_imgs = pl_module(input_imgs)
                 pl_module.train()
@@ -109,6 +112,17 @@ class LossL1KLD(nn.Module):
 
         return loss
 
+class LossVQVAE(nn.Module):
+    def __init__(self):
+        super(LossVQVAE, self).__init__()
+        self.l1criterion = nn.L1Loss(reduction='mean')
+
+    def forward(self, x_hat: torch.Tensor, x: torch.Tensor, quantization_loss: torch.Tensor):
+        l1 = self.l1criterion(x_hat, x)
+        # VQVAE loss
+        loss = l1/10000 + quantization_loss
+        return l1 #loss
+    
 def get_criterions(name: str, gamma: float = 0.9):
 
     if name == 'cross_entropy':
@@ -129,6 +143,8 @@ def get_criterions(name: str, gamma: float = 0.9):
         return nn.MSELoss()
     elif name == 'l1kld':
         return LossL1KLD(gamma=gamma)
+    elif name == 'vqvaeloss':
+        return LossVQVAE()
     else:
         raise ValueError(f'Unknown loss name: {name}')
 
@@ -242,11 +258,12 @@ def get_autoencoder(net,
                 out_channels=1,
                 num_res_layers=2,
                 downsample_parameters=((2, 3, 1, 1), (2, 3, 1, 1)),
-                upsample_parameters=((2, 3, 1, 1, 0), (2, 3, 1, 1, 0)),
-                num_channels=(96, 96),
-                num_res_channels=(96, 96),
-                num_embeddings=256,
+                upsample_parameters=((2, 3, 1, 1, 1), (2, 3, 1, 1, 1)),
+                num_channels=channels, #(96, 96),
+                num_res_channels=channels, #,
+                num_embeddings=latent_size, # 256,
                 embedding_dim=32,
+                act='LEAKYRELU'
                 )
 
         return net
@@ -408,19 +425,29 @@ class Model_AE(Model):
         loss = self.criterion(x_hat, x, mu, logvar)
         # loss = self.criterion(x_hat, x)
         return x, x_hat, loss
+    
+    def vqvae_step(self, batch):
+        x = batch['image'][tio.DATA]
+        x_hat, quant_loss = self.net(images=x)
+        loss = self.criterion(x_hat, x, quant_loss)
+        return x, x_hat, loss, quant_loss
 
     def training_step(self, batch, batch_idx):
         
         if self.loss == "l1kld":
             x, x_hat, loss = self.vae_step(batch)
+        elif self.loss == "vqvaeloss":
+            x, x_hat, loss, quant_loss = self.vqvae_step(batch)
+            batch_size = len(x)  
+            self.log("train_quant_loss", quant_loss, on_step=False, on_epoch=True, prog_bar=True, logger=True, batch_size=batch_size)
         else:
             x_hat, x = self.infer_batch(batch)                      
             loss = self.criterion(x_hat, x).mean()
 
-        batch_size = len(x)  
-        self.log("train_loss", loss, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
+        batch_size = len(x)            
+        self.log("train_loss", loss, on_step=False, on_epoch=True, prog_bar=True, logger=True, batch_size=batch_size)
         self.train_mse(x_hat, x)
-        self.log("train_mse", self.train_mse, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
+        self.log("train_mse", self.train_mse, on_step=False, on_epoch=True, prog_bar=True, logger=True, batch_size=batch_size)
            
         return loss
 
@@ -428,6 +455,10 @@ class Model_AE(Model):
 
         if self.loss == "l1kld":
             x, x_hat, loss = self.vae_step(batch)
+        elif self.loss == "vqvaeloss":
+            x, x_hat, loss, quant_loss = self.vqvae_step(batch)
+            batch_size = len(x)  
+            self.log("val_quant_loss", quant_loss, on_step=False, on_epoch=True, prog_bar=True, logger=True, batch_size=batch_size)
         else:
             x_hat, x = self.infer_batch(batch)          
             loss = self.criterion(x_hat, x).mean()
@@ -444,13 +475,13 @@ class Model_AE(Model):
 
 
 class GenerateReconstructions(Callback):
-    def __init__(self, input_imgs, every_n_epochs=1, split="train", vae=False):
+    def __init__(self, input_imgs, every_n_epochs=1, split="train", ae_type='vae'):
         super().__init__()
         self.input_imgs = input_imgs  # Images to reconstruct during training
         # Only save those images every N epochs (otherwise tensorboard gets quite large)
         self.every_n_epochs = every_n_epochs
         self.split = split
-        self.vae = vae
+        self.ae_type = ae_type
 
     def on_train_epoch_end(self, trainer, pl_module):
         if trainer.current_epoch % self.every_n_epochs == 0:
@@ -458,8 +489,10 @@ class GenerateReconstructions(Callback):
             input_imgs = self.input_imgs.to(pl_module.device)
             with torch.no_grad():
                 pl_module.eval()
-                if self.vae:
+                if self.ae_type == 'vae':
                     reconst_imgs, _, _, _ = pl_module(input_imgs)
+                elif self.ae_type == 'vqvae':
+                    reconst_imgs, _ = pl_module(input_imgs)
                 else:
                     reconst_imgs = pl_module(input_imgs)
                 pl_module.train()

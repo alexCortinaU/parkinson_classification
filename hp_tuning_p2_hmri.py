@@ -5,6 +5,7 @@ import pandas as pd
 import torchio as tio
 import pytorch_lightning as pl
 import numpy as np
+import torch
 from pytorch_lightning.loggers import TensorBoardLogger
 import yaml
 from dataset.hmri_dataset import HMRIDataModule, HMRIControlsDataModule, HMRIPDDataModule
@@ -13,7 +14,7 @@ from utils.utils import get_pretrained_model, reconstruct
 this_path = Path().resolve()
 
 def full_train_model(cfg):
-
+    torch.autograd.set_detect_anomaly(True)
     # Set data directory
     # root_dir = Path('/mnt/scratch/7TPD/mpm_run_acu/bids/derivatives/hMRI')
     root_dir = Path('/mnt/projects/7TPD/bids/derivatives/hMRI_acu/derivatives/hMRI')
@@ -50,20 +51,17 @@ def full_train_model(cfg):
                      **cfg['model'])
 
     # create callbacks
-    if 'vae' in cfg['model']['net']:
-        is_vae = True
-    else:
-        is_vae = False
+    ae_type = cfg['model']['net']
 
     if cfg['training']['display_recons']:
         train_display = GenerateReconstructions(data.get_images(num=4, mode='train'),
                                                 every_n_epochs=10,
                                                 split='train',
-                                                vae=is_vae)
+                                                ae_type=ae_type)
         val_display = GenerateReconstructions(data.get_images(num=4, mode='val'),
                                                 every_n_epochs=10,
                                                 split='val',
-                                                vae=is_vae)
+                                                ae_type=ae_type)
     # create reconstruction error callback
 
     hc_re_callback = ComputeRE(input_imgs=hc_patches, 
@@ -72,7 +70,7 @@ def full_train_model(cfg):
                                subject=hc_subject,
                                every_n_epochs=1,
                                cohort='controls',
-                               vae=is_vae)
+                               ae_type=ae_type)
     
     pd_re_callback = ComputeRE(input_imgs=pd_patches,
                                 locations=pd_locations,
@@ -80,7 +78,7 @@ def full_train_model(cfg):
                                 subject=pd_subject,
                                 every_n_epochs=1,
                                 cohort='pd',
-                                vae=is_vae)
+                                ae_type=ae_type)
     # create other callbacks
     checkpoint_callback = pl.callbacks.ModelCheckpoint(save_last=True,
                                                     monitor=cfg['training']['monitor_ckpt'],
@@ -195,33 +193,27 @@ def main():
     # lrates = [0.008, 0.001]
 
     maps = ['MTsat', 'R1', 'R2s_WLS1', 'PD_R2scorr']
-    gammas = [0.95]
-
-    model_net = 'autoencoder'
-
+    model_net = cfg['model']['net']
     exc_times = []
     exps = f'normative_{model_net}'
-    for gamma in gammas:
-        for map_type in maps: 
-            times = {}   
-            cfg['model']['gamma'] = gamma
-            cfg['model']['net'] = model_net
-            # cfg['dataset']['patch_size'] = ps
-            cfg['dataset']['map_type'] = [map_type]
-            cfg['exp_name'] = f'{exps}_{map_type}' #_gamma_{gamma}'
-            model, data_hc, data_pd, exc_time, dump_path = full_train_model(cfg)
-            # # load model from checkpoint
-            # last_ckpt_path = dump_path/'version_0'/ 'checkpoints'/ 'last.ckpt'
-            # model = Model_AE.load_from_checkpoint(last_ckpt_path, **cfg['model'])
-            # model = model.to('cuda')
-            # model.eval()
-            # compute_recons(model, data_hc, data_pd, dump_path, vae=True)
-            del model, data_hc, data_pd
-            times['exp_name'] = cfg['exp_name']  
-            times['time'] = exc_time    
-            exc_times.append(times)
-    
-    pd.DataFrame(exc_times).to_csv(dump_path.parent/f'{exps}_sae_execution_times_.csv', index=False)
+    for map_type in maps: 
+        times = {}   
+        # cfg['model']['gamma'] = gamma        
+        # cfg['dataset']['patch_size'] = ps
+        cfg['dataset']['map_type'] = [map_type]
+        cfg['exp_name'] = f'{exps}_{map_type}' #_gamma_{gamma}'
+        model, data_hc, data_pd, exc_time, dump_path = full_train_model(cfg)
+        # # load model from checkpoint
+        # last_ckpt_path = dump_path/'version_0'/ 'checkpoints'/ 'last.ckpt'
+        # model = Model_AE.load_from_checkpoint(last_ckpt_path, **cfg['model'])
+        # model = model.to('cuda')
+        # model.eval()
+        # compute_recons(model, data_hc, data_pd, dump_path, vae=True)
+        del model, data_hc, data_pd
+        times['exp_name'] = cfg['exp_name']  
+        times['time'] = exc_time    
+        exc_times.append(times)    
+        pd.DataFrame(exc_times).to_csv(dump_path.parent/f'{exps}_vqvae_execution_times_.csv', index=False)
 
 if __name__ == '__main__':
     main()
