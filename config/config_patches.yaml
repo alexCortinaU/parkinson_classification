@@ -1,5 +1,5 @@
 pl_trainer:
-  max_epochs: 250
+  max_epochs: 100
   devices:
   - 0
   accelerator: gpu
@@ -13,9 +13,9 @@ training:
 
 dataset:
   train_num_workers: 4
-  train_batch_size: 16
+  train_batch_size: 10
   val_num_workers: 4
-  val_batch_size: 16
+  val_batch_size: 10
   reshape_size: 180
   patch_size: 128
   map_type: 
