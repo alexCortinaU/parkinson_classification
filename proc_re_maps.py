@@ -29,6 +29,7 @@ import yaml
 
 from dataset.hmri_dataset import HMRIDataModule, HMRIControlsDataModule, HMRIPDDataModule
 from models.pl_model import Model, Model_AE, GenerateReconstructions, ComputeRE
+from GenerativeModels.generative.networks.nets import VQVAE
 
 from utils.utils import reconstruct
 from utils.utils import save_nifti_from_array, crop_img
@@ -97,45 +98,74 @@ def get_statistics_from_map(xai_map: np.ndarray, subject: str, group: str):
 
     return pd.DataFrame(stats)
 
-def get_re_map(subj_idx, model, data, ovlap=6, vae=False):
+def get_re_map(subj_idx, model, data, ovlap=6, ae_type='vae', error_type='mse', device='cuda'):
     hc_patches, hc_locations, hc_sampler, hc_subject = data.get_grid(subj=subj_idx, overlap=ovlap, mode='val')
-    hc_data = [hc_patches, hc_locations, hc_sampler, hc_subject, 'sub_xx'] # last subj_id not relevant
-    rec_error = reconstruct(hc_data, model, 
+    hc_data = [hc_patches.to(device), hc_locations.to(device), hc_sampler, hc_subject, 'sub_xx'] # last subj_id not relevant
+    rec_error, rec_img = reconstruct(hc_data, model, 
                             overlap_mode='hann', 
                             save_img=False,  
-                            vae=vae)
-    
-    return rec_error, hc_subject
+                            ae_type=ae_type,
+                            error_type=error_type)
 
-def main():
+    return rec_error, rec_img, hc_subject
+
+def load_vqvae_model(chkpt_path, device, channels, latent_size):
+    # load model
+    model = VQVAE(
+                spatial_dims=3,
+                in_channels=1,
+                out_channels=1,
+                num_res_layers=2,
+                downsample_parameters=((2, 3, 1, 1), (2, 3, 1, 1)),
+                upsample_parameters=((2, 3, 1, 1, 1), (2, 3, 1, 1, 1)),
+                num_channels=channels, #(96, 96),
+                num_res_channels=channels, #,
+                num_embeddings=latent_size, # 256,
+                embedding_dim=32,
+                act='LEAKYRELU'
+                )
+    model.load_state_dict(torch.load(chkpt_path))
+    return model
+
+def generate_recons_from_chkpt(chkpt_path, error_types):
     # read model from checkpoint and set up
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    chkpt_path = Path('/mrhome/alejandrocu/Documents/parkinson_classification/p2_hmri_outs/hp_tuning/pd_hmri_lr0.001_ps128/version_0/checkpoints/last.ckpt')
 
     # load config file
-    exp_dir = chkpt_path.parent.parent.parent
-    with open(exp_dir /'config_dump.yml', 'r') as f:
-        exp_cfg = list(yaml.load_all(f, yaml.SafeLoader))[0]
+    if 'vqvae' in chkpt_path.name:
+        exp_dir = chkpt_path.parent
+        with open(exp_dir /'config_dump.yml', 'r') as f:
+            exp_cfg = list(yaml.load_all(f, yaml.SafeLoader))[0]
+    else:
+        exp_dir = chkpt_path.parent.parent.parent
+        with open(exp_dir /'config_dump.yml', 'r') as f:
+            exp_cfg = list(yaml.load_all(f, yaml.SafeLoader))[0]
 
     # set random seed for reproducibility
     pl.seed_everything(exp_cfg['dataset']['random_state'],  workers=True)
 
-    model = Model_AE.load_from_checkpoint(chkpt_path, **exp_cfg['model'])
+    # load model
+    ae_type = exp_cfg['model']['net']
+    if ae_type == 'autoencoder' or ae_type == 'svae':
+        model = Model_AE.load_from_checkpoint(chkpt_path, **exp_cfg['model'])
+    elif ae_type == 'vqvae':
+        model = load_vqvae_model(chkpt_path, 
+                                 device,
+                                 channels=exp_cfg['model']['channels'],
+                                 latent_size=exp_cfg['model']['latent_size'])
+    else:
+        raise ValueError('Wrong model type!')
+    
     model = model.to(device)
     model.eval()
 
-    if 'vae' in exp_cfg['model']['net']:
-        is_vae = True
-    else:
-        is_vae = False
-    print(f'Is model vae: {is_vae}')
     # create datasets
-
     root_dir = Path('/mnt/projects/7TPD/bids/derivatives/hMRI_acu/derivatives/hMRI')
     md_df = pd.read_csv(this_path/'bids_3t.csv')
     md_df_hc = md_df[md_df['group'] == 0]
     md_df_pd = md_df[md_df['group'] == 1]
 
+    map_type = exp_cfg['dataset']['map_type']
     augmentations = tio.Compose([])
     data_hc = HMRIControlsDataModule(md_df=md_df_hc,
                             root_dir=root_dir,
@@ -151,25 +181,62 @@ def main():
     data_pd.prepare_data()
     data_pd.setup()
 
-    dfs = pd.DataFrame()
-    for i in range(len(data_hc.md_df_val)):
-        subject = data_hc.md_df_train.iloc[i]['id']
-        re_map, subj_img = get_re_map(i, model, data_hc)
-        print(re_map.shape)
-        df = get_statistics_from_map(re_map, subject, 'HC')
-        dfs = pd.concat([dfs, df], axis=0)
+    # obtain reconstruction and RE error maps
+    for i in range(len(data_pd.md_df)):
+        subject_idx = data_pd.md_df.iloc[i]['id']
+        for p, error_type in enumerate(error_types):
+            re_map, rec_img, subj_img = get_re_map(i, 
+                                                model, 
+                                                data_pd,
+                                                ae_type=ae_type,
+                                                error_type=error_type,
+                                                device=device)
+            save_path = Path('/mrhome/alejandrocu/Documents/parkinson_classification/reconstructions')
+            save_path = save_path / f'{subject_idx}/{map_type[0]}/{ae_type}'
+            save_path.mkdir(parents=True, exist_ok=True)
+            
+            # save images
+            save_nifti_from_array(arr=re_map.cpu().numpy(),
+                                subj_id=subject_idx,
+                                path=save_path/f'{subject_idx}_{error_type}_re_map.nii',
+                                affine_matrix=subj_img['image']['affine'],
+                                header=None)
+            if p == 0:
+                save_nifti_from_array(arr=rec_img[0].cpu().numpy(),
+                                    subj_id=subject_idx,
+                                    path=save_path/f'{subject_idx}_rec_img.nii',
+                                    affine_matrix=subj_img['image']['affine'],
+                                    header=None)
+        save_dict = {'chkpt_path': str(chkpt_path),
+                        'error_types': str(error_types)}
+        with open(str(save_path / f'reconstruction_outs.json'), 'w') as f:
+            json.dump(save_dict, f)
         break
-    dfs.reset_index(drop=True, inplace=True)
-    print(dfs)
 
-    # save_nifti_from_array(subj_id=subject,
-    #                           arr=re_map,
-    #                           path=Path('/mrhome/alejandrocu/Documents/parkinson_classification/p2_hmri_outs/hp_tuning/pd_hmri_lr0.001_ps128') / f'test_{subject}_re.nii.gz')
-    subj_img = subj_img['image'][tio.DATA][0].cpu().numpy()
-    save_nifti_from_array(subj_id=subject,
-                            arr=subj_img,
-                            path=Path('/mrhome/alejandrocu/Documents/parkinson_classification/p2_hmri_outs/hp_tuning/pd_hmri_lr0.001_ps128') / f'test_{subject}_og_img.nii.gz')
+def main():
+    chkpt_path = Path('/mrhome/alejandrocu/Documents/parkinson_classification/vqvae_models/normative_vqvae_run3_MTsat/normative_vqvae_run3_MTsat_vqvae_model.pt')
+    generate_recons_from_chkpt(chkpt_path, error_types=['ssim', 'l1', 'mse', 'l2']) # ['ssim', 'l1', 'mse', 'l2']
+    print('done')
 
 if __name__ == '__main__':
     main()
-    
+
+
+    # dfs = pd.DataFrame()
+    # for i in range(len(data_hc.md_df_val)):
+    #     subject = data_hc.md_df_train.iloc[i]['id']
+    #     re_map, rec_img, subj_img = get_re_map(i, model, data_hc)
+    #     print(re_map.shape)
+    #     df = get_statistics_from_map(re_map, subject, 'HC')
+    #     dfs = pd.concat([dfs, df], axis=0)
+    #     break
+    # dfs.reset_index(drop=True, inplace=True)
+    # print(dfs)
+
+    # # save_nifti_from_array(subj_id=subject,
+    # #                           arr=re_map,
+    # #                           path=Path('/mrhome/alejandrocu/Documents/parkinson_classification/p2_hmri_outs/hp_tuning/pd_hmri_lr0.001_ps128') / f'test_{subject}_re.nii.gz')
+    # subj_img = subj_img['image'][tio.DATA][0].cpu().numpy()
+    # save_nifti_from_array(subj_id=subject,
+    #                         arr=subj_img,
+    #                         path=Path('/mrhome/alejandrocu/Documents/parkinson_classification/p2_hmri_outs/hp_tuning/pd_hmri_lr0.001_ps128') / f'test_{subject}_og_img.nii.gz')

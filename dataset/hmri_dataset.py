@@ -495,7 +495,7 @@ class HMRIPDDataModule(HMRIControlsDataModule):
                             num_workers=0,
                             shuffle=False)
     
-    def get_grid(self, subj=0, overlap=0, patch_size=None):
+    def get_grid(self, subj=0, overlap=0, patch_size=None, mode='train'):
         # get patches from single subject (subj)
         # for inference (reconstruction) purposes
         

@@ -19,6 +19,8 @@ from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
 this_path = Path().resolve()
 
+# ordering = Ordering(ordering_type=OrderingType.RASTER_SCAN.value, spatial_dims=2, dimensions=(1,) + spatial_shape)
+
 def full_train_model(cfg):
 
     root_dir = Path('/mnt/projects/7TPD/bids/derivatives/hMRI_acu/derivatives/hMRI')

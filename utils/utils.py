@@ -17,21 +17,28 @@ import yaml
 import nibabel as nib
 import SimpleITK as sitk
 import cc3d
+from torchmetrics.functional import structural_similarity_index_measure
 
 from dataset.ppmi_dataset import PPMIDataModule
 from dataset.hmri_dataset import HMRIDataModule
 from models.pl_model import Model
 
-def save_nifti_from_array(subj_id: str,
-                          arr: np.ndarray, 
-                          path: Path):
+def save_nifti_from_array(arr: np.ndarray,                           
+                          subj_id: str,
+                          path: Path,                          
+                          affine_matrix = None,
+                          header = None):
     """
-    Save a nifti file from a numpy array and data from original nifti
+    Save a nifti file from a numpy array and data from original nifti (if not provided)
     """
-    img_name = f'{subj_id}_ses-01prisma3t_echo-01_part-magnitude-acq-MToff_MPM_MTsat_w.nii'
-    img = nib.load(Path(f'/mnt/projects/7TPD/bids/derivatives/hMRI_acu/derivatives/hMRI/{subj_id}/Results') 
-                   / img_name)
-    nifti = nib.Nifti1Image(arr, img.affine, img.header)
+    if affine_matrix is None:
+        img_name = f'{subj_id}_ses-01prisma3t_echo-01_part-magnitude-acq-MToff_MPM_MTsat_w.nii'
+        img = nib.load(Path(f'/mnt/projects/7TPD/bids/derivatives/hMRI_acu/derivatives/hMRI/{subj_id}/Results') 
+                    / img_name)
+        affine_matrix = img.affine
+        header = img.header
+
+    nifti = nib.Nifti1Image(arr, affine_matrix, header)
     nib.save(nifti, path)
 
 def get_data_and_model(ckpt_path: Path, 
@@ -143,25 +150,35 @@ def get_pretrained_model(chkpt_path: Path, input_channels: int = 4):
 
 # Reconstruction
 
-def reconstruct(data, model, ckpt_path=None, overlap_mode='crop', save_img=False, out_dir=None, type='pd', vae=False):
-    patches, locations, sampler, subject, subj_id = data
-    input_imgs = patches.to(model.device)
+def reconstruct(data, model, ckpt_path=None, overlap_mode='hann', save_img=False, out_dir=None, type='pd', ae_type='vae', error_type: str = 'L2'):
+    input_imgs, locations, sampler, subject, subj_id = data
+    # input_imgs = patches.to(model.device)
     aggregator = tio.data.GridAggregator(sampler, overlap_mode=overlap_mode)
 
     with torch.no_grad():
-        if vae:
-            x_hat, _, _, _ = model(input_imgs)
+        if ae_type == 'svae':
+            reconst_imgs, _, _, _ = model(input_imgs)
+        elif ae_type == 'vqvae':
+            reconst_imgs, _ = model(input_imgs)
         else:
-            x_hat = model(input_imgs)
+            reconst_imgs = model(input_imgs)
 
-    aggregator.add_batch(x_hat, locations)
+    aggregator.add_batch(reconst_imgs, locations)
     reconstructed = aggregator.get_output_tensor()
 
     # Compute reconstruction error
     subject = subject['image'][tio.DATA]
-    diff = [torch.pow(subject[i] - reconstructed[i], 2) for i in range(subject.shape[0])]
-    rerror = torch.sqrt(torch.sum(torch.stack(diff), dim=0))
-    rerror = rerror.cpu().numpy()
+    if error_type == 'l2':    
+        diff = [torch.pow(subject[i] - reconstructed[i], 2) for i in range(subject.shape[0])]
+        rerror = torch.sqrt(torch.sum(torch.stack(diff), dim=0))
+    elif error_type == 'l1':
+        diff = [torch.abs(subject[i] - reconstructed[i]) for i in range(subject.shape[0])]
+        rerror = torch.sum(torch.stack(diff), dim=0)
+    elif error_type == 'ssim':
+        _, rerror = structural_similarity_index_measure(subject, reconstructed, reduction=None, return_full_image=True)
+    elif error_type == 'mse':
+        diff = [torch.pow(subject[i] - reconstructed[i], 2) for i in range(subject.shape[0])]
+        rerror = torch.mean(torch.stack(diff), dim=0)
     
     if ckpt_path is not None:
         if out_dir is None:
@@ -173,13 +190,13 @@ def reconstruct(data, model, ckpt_path=None, overlap_mode='crop', save_img=False
                               arr=reconstructed[0].cpu().numpy(),
                               path=out_dir / f'{type}_{subj_id}_recon.nii.gz')
         save_nifti_from_array(subj_id=subj_id,
-                              arr=rerror,
+                              arr=rerror.cpu().numpy(),
                               path=out_dir / f'{type}_{subj_id}_re_error.nii.gz')
         save_nifti_from_array(subj_id=subj_id,
                               arr=subject[0].cpu().numpy(),
                               path=out_dir / f'{type}_{subj_id}_original.nii.gz')
     
-    return rerror
+    return rerror, reconstructed
 
 # Brain segmentation 
 
