@@ -22,7 +22,7 @@ import torchvision
 import pytorch_lightning as pl
 from torchvision import models
 from torchvision import transforms
-
+from datetime import datetime
 import yaml
 # from dataset.hmri_dataset import HMRIDataModule, HMRIDataModuleDownstream
 # from models.pl_model import Model, ContrastiveLearning, ModelDownstream
@@ -34,7 +34,29 @@ from GenerativeModels.generative.networks.nets import VQVAE
 from utils.utils import reconstruct
 from utils.utils import save_nifti_from_array, crop_img
 from utils.general_utils import save_sitk_from_nda
+from tqdm import tqdm
 this_path = Path().resolve()
+
+CHKPT_PATHS = {
+    'vqvae': {
+        'MTsat': '/mrhome/alejandrocu/Documents/parkinson_classification/vqvae_models/normative_vqvae_run3_MTsat/normative_vqvae_run3_MTsat_vqvae_model.pt',
+        'R1': '/mrhome/alejandrocu/Documents/parkinson_classification/vqvae_models/normative_vqvae_run3_R1/normative_vqvae_run3_R1_vqvae_model.pt',
+        'R2s_WLS1': '/mrhome/alejandrocu/Documents/parkinson_classification/vqvae_models/normative_vqvae_run3_R2s_WLS1/normative_vqvae_run3_R2s_WLS1_vqvae_model.pt',
+        'PD_R2scorr': '/mrhome/alejandrocu/Documents/parkinson_classification/vqvae_models/normative_vqvae_run3_PD_R2scorr/normative_vqvae_run3_PD_R2scorr_vqvae_model.pt'
+            },
+    'svae': {
+        'MTsat': '/mrhome/alejandrocu/Documents/parkinson_classification/p2_hmri_outs/normative_svae_MTsat_gamma_0.95/version_0/checkpoints/last.ckpt',
+        'R1': '/mrhome/alejandrocu/Documents/parkinson_classification/p2_hmri_outs/normative_svae_R1_gamma_0.95/version_0/checkpoints/last.ckpt',
+        'R2s_WLS1': '/mrhome/alejandrocu/Documents/parkinson_classification/p2_hmri_outs/normative_svae_R2s_WLS1_gamma_0.95/version_0/checkpoints/last.ckpt',
+        'PD_R2scorr': '/mrhome/alejandrocu/Documents/parkinson_classification/p2_hmri_outs/normative_svae_PD_R2scorr_gamma_0.95/version_0/checkpoints/last.ckpt'
+            },
+    'autoencoder': {
+        'MTsat': '/mrhome/alejandrocu/Documents/parkinson_classification/p2_hmri_outs/normative_autoencoder_MTsat/version_0/checkpoints/last.ckpt',
+        'R1': '/mrhome/alejandrocu/Documents/parkinson_classification/p2_hmri_outs/normative_autoencoder_R1/version_0/checkpoints/last.ckpt',
+        'R2s_WLS1': '/mrhome/alejandrocu/Documents/parkinson_classification/p2_hmri_outs/normative_autoencoder_R2s_WLS1/version_0/checkpoints/last.ckpt',
+        'PD_R2scorr': '/mrhome/alejandrocu/Documents/parkinson_classification/p2_hmri_outs/normative_autoencoder_PD_R2scorr/version_0/checkpoints/last.ckpt'
+            }
+    }   
 
 def mask_atlas(subject:str, group: str, save=True):
     anat_path = Path(f'/mnt/projects/7TPD/bids/derivatives/hMRI_acu/derivatives/hMRI/{subject}/Results/Masks')
@@ -140,7 +162,7 @@ def generate_recons_from_chkpt(chkpt_path, error_types):
         exp_dir = chkpt_path.parent.parent.parent
         with open(exp_dir /'config_dump.yml', 'r') as f:
             exp_cfg = list(yaml.load_all(f, yaml.SafeLoader))[0]
-
+    
     # set random seed for reproducibility
     pl.seed_everything(exp_cfg['dataset']['random_state'],  workers=True)
 
@@ -182,7 +204,9 @@ def generate_recons_from_chkpt(chkpt_path, error_types):
     data_pd.setup()
 
     # obtain reconstruction and RE error maps
-    for i in range(len(data_pd.md_df)):
+    progress_bar = tqdm(range(len(data_pd.md_df)), desc='Reconstructing', total=len(data_pd.md_df), ncols=110)
+    for i in progress_bar:
+    # for i in range(len(data_pd.md_df)):
         subject_idx = data_pd.md_df.iloc[i]['id']
         for p, error_type in enumerate(error_types):
             re_map, rec_img, subj_img = get_re_map(i, 
@@ -211,32 +235,17 @@ def generate_recons_from_chkpt(chkpt_path, error_types):
                         'error_types': str(error_types)}
         with open(str(save_path / f'reconstruction_outs.json'), 'w') as f:
             json.dump(save_dict, f)
-        break
+        # break
 
 def main():
-    chkpt_path = Path('/mrhome/alejandrocu/Documents/parkinson_classification/vqvae_models/normative_vqvae_run3_MTsat/normative_vqvae_run3_MTsat_vqvae_model.pt')
-    generate_recons_from_chkpt(chkpt_path, error_types=['ssim', 'l1', 'mse', 'l2']) # ['ssim', 'l1', 'mse', 'l2']
-    print('done')
+    init_time = datetime.now()
+    # chkpt_path = Path('/mrhome/alejandrocu/Documents/parkinson_classification/vqvae_models/normative_vqvae_run3_MTsat/normative_vqvae_run3_MTsat_vqvae_model.pt')
+    for ae_type, chkpt_dict in CHKPT_PATHS.items():
+        print(f'Running {ae_type}...')
+        for map_type, chkpt_path in chkpt_dict.items():
+            print(f'Running {map_type}...')
+            generate_recons_from_chkpt(Path(chkpt_path), error_types=['ssim', 'l1', 'mse', 'l2']) # ['ssim', 'l1', 'mse', 'l2']
+    print(f'----- \n Finished in {datetime.now() - init_time}')
 
 if __name__ == '__main__':
     main()
-
-
-    # dfs = pd.DataFrame()
-    # for i in range(len(data_hc.md_df_val)):
-    #     subject = data_hc.md_df_train.iloc[i]['id']
-    #     re_map, rec_img, subj_img = get_re_map(i, model, data_hc)
-    #     print(re_map.shape)
-    #     df = get_statistics_from_map(re_map, subject, 'HC')
-    #     dfs = pd.concat([dfs, df], axis=0)
-    #     break
-    # dfs.reset_index(drop=True, inplace=True)
-    # print(dfs)
-
-    # # save_nifti_from_array(subj_id=subject,
-    # #                           arr=re_map,
-    # #                           path=Path('/mrhome/alejandrocu/Documents/parkinson_classification/p2_hmri_outs/hp_tuning/pd_hmri_lr0.001_ps128') / f'test_{subject}_re.nii.gz')
-    # subj_img = subj_img['image'][tio.DATA][0].cpu().numpy()
-    # save_nifti_from_array(subj_id=subject,
-    #                         arr=subj_img,
-    #                         path=Path('/mrhome/alejandrocu/Documents/parkinson_classification/p2_hmri_outs/hp_tuning/pd_hmri_lr0.001_ps128') / f'test_{subject}_og_img.nii.gz')

@@ -24,6 +24,7 @@ from monai.transforms import (
     OneOf,
     EnsureChannelFirst, Compose, RandRotate90, Resize, ScaleIntensity
 )
+pd.set_option('mode.chained_assignment', None)
 
 class HMRIDataModule(pl.LightningDataModule):
     def __init__(self, 
@@ -461,7 +462,7 @@ class HMRIPDDataModule(HMRIControlsDataModule):
         for drop_id in subjs_to_drop:
             self.md_df.drop(self.md_df[self.md_df.id == drop_id].index, inplace=True)
         self.md_df.reset_index(drop=True, inplace=True)
-        print(f'Drop subjects {subjs_to_drop}')
+        # print(f'Drop subjects {subjs_to_drop}')
         
                                        
         image_paths = self.get_subjects_list(self.md_df)

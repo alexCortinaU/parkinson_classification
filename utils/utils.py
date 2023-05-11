@@ -176,10 +176,11 @@ def reconstruct(data, model, ckpt_path=None, overlap_mode='hann', save_img=False
         rerror = torch.sum(torch.stack(diff), dim=0)
     elif error_type == 'ssim':
         _, rerror = structural_similarity_index_measure(subject, reconstructed, reduction=None, return_full_image=True)
+        rerror = rerror.squeeze()
     elif error_type == 'mse':
         diff = [torch.pow(subject[i] - reconstructed[i], 2) for i in range(subject.shape[0])]
         rerror = torch.mean(torch.stack(diff), dim=0)
-    
+
     if ckpt_path is not None:
         if out_dir is None:
             out_dir = Path('/home/alejandrocu/Documents/parkinson_classification/reconstructions') / Path(ckpt_path).parent.parent.parent.name
