@@ -57,7 +57,9 @@ def full_train_model(cfg):
     data.setup()
 
     # create model
-    model = Model(**cfg['model'])
+    pretrained_model = get_pretrained_model(chkpt_path=Path(cfg['model']['chkpt_path']),
+                                 input_channels=cfg['model']['in_channels'])
+    model = Model(net=pretrained_model.net, **cfg['model']) #net=pretrained_model.net, 
     
     # create callbacks
     checkpoint_callback = pl.callbacks.ModelCheckpoint(save_top_k=5,
@@ -114,7 +116,7 @@ def main():
 
     print('-------\n HPT-2\n-------')
     # read the config file
-    with open('config.yaml', 'r') as f:
+    with open('config/config.yaml', 'r') as f:
         cfg = list(yaml.load_all(f, yaml.SafeLoader))[0]
 
     # set random seed for reproducibility
@@ -125,10 +127,10 @@ def main():
     # lrates = [0.008, 0.001]
 
     maps = ['MTsat', 'R1', 'R2s_WLS1', 'PD_R2scorr'] # 'MTsat', 'R1', 'R2s_WLS1', 'PD_R2scorr'
-    optimizers = ['adam', 'sgd'] # , 'sgd'
-    lrates = [0.01, 0.001]
+    optimizers = ['adam'] #, 'sgd'] # , 'sgd'
+    lrates = [0.01, 0.001] #, 0.001]
     
-    exps = '4C_hMRI'
+    exps = '6A_hMRI'
     exc_times = []
     for optim in optimizers:
         for map_type in maps:  

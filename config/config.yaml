@@ -15,11 +15,14 @@ dataset:
   train_batch_size: 3
   val_num_workers: 2
   val_batch_size: 3
-  reshape_size: 180
+  reshape_size:
+  - 100
+  - 130
+  - 100
   random_state: 42
   weighted_sampler: False
   windowed_dataset: True
-  masked: brain_masked # brainstem_masked
+  masked: brainstem_masked
   shuffle: True
   map_type: 
     # - MTsat
@@ -29,7 +32,7 @@ dataset:
 
 # should match arguments in the module class
 model:
-  net: 3dresnet
+  # net: 3dresnet
   chkpt_path: /home/alejandrocu/Documents/parkinson_classification/p1_ppmi_outs/3dresnet-da01_bz10_focal_sampler/version_0/checkpoints/epoch=01-val_f1=0.7708.ckpt 
   n_classes: 2
   in_channels: 1
@@ -38,7 +41,7 @@ model:
   optimizer_class: sgd # sgd, adam, rmsprop, adamw
   group_params: True # set different LR for classfier (fc layers, i.e. conv_seg)
   learning_rate: 0.001
-  sch_patience: 50
+  sch_patience: 30
   momentum: 0 # 0.9  
   weight_decay: 0.0001 # 0.0001    
 

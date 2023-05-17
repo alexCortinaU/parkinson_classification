@@ -75,8 +75,11 @@ class HMRIDataModule(pl.LightningDataModule):
         for i in range(len(md_df)):
 
             # select the correct folder of masked volumes
-            subj_dir = self.root_dir / md_df['id'][i] / 'Results' / self.masked
-            subj_dir.exists()
+            if self.masked == None:
+                subj_dir = self.root_dir / md_df['id'][i] / 'Results'
+            else:
+                subj_dir = self.root_dir / md_df['id'][i] / 'Results' / self.masked
+            
             # get all windowed nifti volumes
             hmri_files = sorted(list(subj_dir.glob('*_w.nii')), key=lambda x: x.stem)
 
