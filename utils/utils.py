@@ -17,21 +17,28 @@ import yaml
 import nibabel as nib
 import SimpleITK as sitk
 import cc3d
+from torchmetrics.functional import structural_similarity_index_measure
 
 from dataset.ppmi_dataset import PPMIDataModule
 from dataset.hmri_dataset import HMRIDataModule
 from models.pl_model import Model
 
-def save_nifti_from_array(subj_id: str,
-                          arr: np.ndarray, 
-                          path: Path):
+def save_nifti_from_array(arr: np.ndarray,                           
+                          subj_id: str,
+                          path: Path,                          
+                          affine_matrix = None,
+                          header = None):
     """
-    Save a nifti file from a numpy array and data from original nifti
+    Save a nifti file from a numpy array and data from original nifti (if not provided)
     """
-    img_name = f'{subj_id}_ses-01prisma3t_echo-01_part-magnitude-acq-MToff_MPM_MTsat_w.nii'
-    img = nib.load(Path(f'/mnt/scratch/7TPD/mpm_run_acu/bids/derivatives/hMRI/{subj_id}/Results') 
-                   / img_name)
-    nifti = nib.Nifti1Image(arr, img.affine, img.header)
+    if affine_matrix is None:
+        img_name = f'{subj_id}_ses-01prisma3t_echo-01_part-magnitude-acq-MToff_MPM_MTsat_w.nii'
+        img = nib.load(Path(f'/mnt/projects/7TPD/bids/derivatives/hMRI_acu/derivatives/hMRI/{subj_id}/Results') 
+                    / img_name)
+        affine_matrix = img.affine
+        header = img.header
+
+    nifti = nib.Nifti1Image(arr, affine_matrix, header)
     nib.save(nifti, path)
 
 def get_data_and_model(ckpt_path: Path, 
@@ -130,43 +137,50 @@ def get_pretrained_model(chkpt_path: Path, input_channels: int = 4):
     model = Model.load_from_checkpoint(chkpt_path, **exp_cfg['model'])
 
     if exp_cfg['model']['net'] == '3dresnet':
-        if input_channels > 1:
-            model.net.conv1 = torch.nn.Conv3d(in_channels= input_channels, 
-                                        out_channels=64, 
-                                        kernel_size=(7, 7, 7), 
-                                        stride=(2, 2, 2), 
-                                        padding=(3, 3, 3), 
-                                        bias=False)
-            print('Model loaded and first layer replaced')
-            return model
-        else:
-            return model
+        model.net.conv1 = torch.nn.Conv3d(in_channels= input_channels, 
+                                    out_channels=64, 
+                                    kernel_size=(7, 7, 7), 
+                                    stride=(2, 2, 2), 
+                                    padding=(3, 3, 3), 
+                                    bias=False)
+        return model
     else:
         print('Model not supported')
         return None
 
 # Reconstruction
 
-def reconstruct(data, model, ckpt_path=None, overlap_mode='crop', save_img=False, out_dir=None, type='pd', vae=False):
-    patches, locations, sampler, subject, subj_id = data
-    input_imgs = patches.to(model.device)
+def reconstruct(data, model, ckpt_path=None, overlap_mode='hann', save_img=False, out_dir=None, type='pd', ae_type='vae', error_type: str = 'L2'):
+    input_imgs, locations, sampler, subject, subj_id = data
+    # input_imgs = patches.to(model.device)
     aggregator = tio.data.GridAggregator(sampler, overlap_mode=overlap_mode)
 
     with torch.no_grad():
-        if vae:
-            x_hat, _, _, _ = model(input_imgs)
+        if ae_type == 'svae':
+            reconst_imgs, _, _, _ = model(input_imgs)
+        elif ae_type == 'vqvae':
+            reconst_imgs, _ = model(input_imgs)
         else:
-            x_hat = model(input_imgs)
+            reconst_imgs = model(input_imgs)
 
-    aggregator.add_batch(x_hat, locations)
+    aggregator.add_batch(reconst_imgs, locations)
     reconstructed = aggregator.get_output_tensor()
 
     # Compute reconstruction error
     subject = subject['image'][tio.DATA]
-    diff = [torch.pow(subject[i] - reconstructed[i], 2) for i in range(subject.shape[0])]
-    rerror = torch.sqrt(torch.sum(torch.stack(diff), dim=0))
-    rerror = rerror.cpu().numpy()
-    
+    if error_type == 'l2':    
+        diff = [torch.pow(subject[i] - reconstructed[i], 2) for i in range(subject.shape[0])]
+        rerror = torch.sqrt(torch.sum(torch.stack(diff), dim=0))
+    elif error_type == 'l1':
+        diff = [torch.abs(subject[i] - reconstructed[i]) for i in range(subject.shape[0])]
+        rerror = torch.sum(torch.stack(diff), dim=0)
+    elif error_type == 'ssim':
+        _, rerror = structural_similarity_index_measure(subject, reconstructed, reduction=None, return_full_image=True)
+        rerror = rerror.squeeze()
+    elif error_type == 'mse':
+        diff = [torch.pow(subject[i] - reconstructed[i], 2) for i in range(subject.shape[0])]
+        rerror = torch.mean(torch.stack(diff), dim=0)
+
     if ckpt_path is not None:
         if out_dir is None:
             out_dir = Path('/home/alejandrocu/Documents/parkinson_classification/reconstructions') / Path(ckpt_path).parent.parent.parent.name
@@ -177,13 +191,13 @@ def reconstruct(data, model, ckpt_path=None, overlap_mode='crop', save_img=False
                               arr=reconstructed[0].cpu().numpy(),
                               path=out_dir / f'{type}_{subj_id}_recon.nii.gz')
         save_nifti_from_array(subj_id=subj_id,
-                              arr=rerror,
+                              arr=rerror.cpu().numpy(),
                               path=out_dir / f'{type}_{subj_id}_re_error.nii.gz')
         save_nifti_from_array(subj_id=subj_id,
                               arr=subject[0].cpu().numpy(),
                               path=out_dir / f'{type}_{subj_id}_original.nii.gz')
     
-    return rerror
+    return rerror, reconstructed
 
 # Brain segmentation 
 
@@ -197,19 +211,19 @@ def get_bounding_box_of_segmentation(binary_mask: np.ndarray):
     x_max, y_max, z_max = bounding_box.max(axis=0)
     return x_min, x_max, y_min, y_max, z_min, z_max
 
-def crop_img(img: np.ndarray, return_dims: bool = False, margin: int = 10):
+def crop_img(img: np.ndarray, return_dims: bool = False):
     """
     Crop an image to its bounding box
     """
     # get bounding box
     x_min, x_max, y_min, y_max, z_min, z_max = get_bounding_box_of_segmentation(img)
     # crop with extra margin
-    x_min = max(0, x_min - margin)
-    x_max = min(img.shape[0], x_max + margin)
-    y_min = max(0, y_min - margin)
-    y_max = min(img.shape[1], y_max + margin)
-    z_min = max(0, z_min - margin)
-    z_max = min(img.shape[2], z_max + margin)
+    x_min = max(0, x_min - 10)
+    x_max = min(img.shape[0], x_max + 10)
+    y_min = max(0, y_min - 10)
+    y_max = min(img.shape[1], y_max + 10)
+    z_min = max(0, z_min - 10)
+    z_max = min(img.shape[2], z_max + 10)
 
     if return_dims:
         return x_min, x_max, y_min, y_max, z_min, z_max
