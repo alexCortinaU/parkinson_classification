@@ -123,17 +123,20 @@ class ContrastiveLearning(pl.LightningModule):
         return criterion
 
     def configure_optimizers(self):
-        scheduler = None
+        scheduler = True
         if self.hpdict['model']['optimizer_class'] == "adam":
             optimizer = torch.optim.Adam(self.model.parameters(), lr=self.hpdict['model']['learning_rate'])
                     # "decay the learning rate with the cosine decay schedule without restarts"
+        elif self.hpdict['model']['optimizer_class'] == "sgd":
+            optimizer = torch.optim.SGD(self.model.parameters(), lr=self.hpdict['model']['learning_rate'], momentum=0.9)
             scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
                 optimizer, self.hpdict['pl_trainer']['max_epochs'], eta_min=0, last_epoch=-1
             )
+            print("Using SGD and scheduler")
         else:
             raise NotImplementedError
 
-        if scheduler:
+        if scheduler and self.hpdict['model']['optimizer_class'] == "sgd":
             return {"optimizer": optimizer, "lr_scheduler": scheduler}
         else:
             return {"optimizer": optimizer}
@@ -294,7 +297,8 @@ class TransformsSimCLR:
                 # LoadImage(),
                 EnsureChannelFirst(),
                 ScaleIntensity(minv=0, maxv=1),
-                ResizeWithPadOrCrop(reshape_size, mode='minimum')
+                Resize(spatial_size=(reshape_size, reshape_size, reshape_size), mode='trilinear'),
+                # ResizeWithPadOrCrop(reshape_size, mode='minimum')
             ]
         )
         self.augment = Compose([
@@ -349,6 +353,8 @@ def full_train(cfg):
                                             mode="min",
                                             filename="{epoch:02d}-{val_loss}" # problem with val_loss format using Monai's meta tensor
                                             )
+    lr_monitor = pl.callbacks.LearningRateMonitor(logging_interval='epoch')
+
     # create loggers
     tb_logger = TensorBoardLogger(save_dir=Path('./p3_ssl_hmri'),
                                 name=cfg['exp_name'])
@@ -363,7 +369,7 @@ def full_train(cfg):
     
     # create trainer
     trainer = pl.Trainer(**cfg['pl_trainer'],
-                        callbacks=checkpoint_callback,
+                        callbacks=[checkpoint_callback, lr_monitor],
                         logger=[tb_logger],
                         )
 
@@ -382,11 +388,11 @@ def main():
      # set random seed for reproducibility
     pl.seed_everything(cfg['dataset']['random_state'],  workers=True)
 
-    maps = ['MTsat', 'R1', 'PD_R2scorr'] # 'MTsat', 'R1', 'R2s_WLS1', 'PD_R2scorr'
-    optimizers = ['adam'] # , 'sgd'
-    lrates = [0.001]
+    maps = ['MTsat', 'R1', 'R2s_WLS1', 'PD_R2scorr'] # 'MTsat', 'R1', 'R2s_WLS1', 'PD_R2scorr'
+    optimizers = ['sgd'] # , 'sgd'
+    lrates = [0.01]
     
-    exps = 'ssl_simclr'
+    exps = 'ssl_hmri'
     exc_times = []
     for optim in optimizers:
         for map_type in maps:  

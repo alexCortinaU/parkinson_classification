@@ -99,7 +99,7 @@ def full_train_model(cfg):
     # early stopping doesn't work with monai's Meta tensors
     if cfg['training']['early_stopping']:
         early_stopping = pl.callbacks.early_stopping.EarlyStopping(monitor="val_loss", 
-                                                                mode='min', patience=60,
+                                                                mode='min', patience=70,
                                                                 )
         callbacks = [checkpoint_callback, lr_monitor, early_stopping] # finetune_callback,
     else:
@@ -141,16 +141,20 @@ def main():
     # set random seed for reproducibility
     pl.seed_everything(cfg['dataset']['random_state'],  workers=True)
 
-    maps = ['R2s_WLS1', 'MTsat', 'R1', 'PD_R2scorr'] # 'MTsat', 'R1', 'R2s_WLS1', 'PD_R2scorr'
+    maps = ['MTsat', 'R1'] # 'MTsat', 'R1', 'R2s_WLS1', 'PD_R2scorr'
     optimizers = ['adam'] # , 'sgd'
     lrates = [0.01, 0.001]
     # unfreeze_at_epochs = [15]
-    chckpt_paths = {'R2s_WLS1': "/mrhome/alejandrocu/Documents/parkinson_classification/p3_ssl_hmri/rs120_ssl_simclr_resnet_DA02_bs5_v2epochs400/version_0/checkpoints/epoch=326-val_loss=tensor(0.8306, device='cuda:0').ckpt",
-                    'MTsat': "/mrhome/alejandrocu/Documents/parkinson_classification/p3_ssl_hmri/ssl_simclr_MTsat_optim_adam_lr_0.001/version_1/checkpoints/epoch=240-val_loss=tensor(1.0347, device='cuda:0').ckpt",
-                    'R1': "/mrhome/alejandrocu/Documents/parkinson_classification/p3_ssl_hmri/ssl_simclr_R1_optim_adam_lr_0.001/version_0/checkpoints/epoch=351-val_loss=tensor(0.8743, device='cuda:0').ckpt",
-                    'PD_R2scorr': "/mrhome/alejandrocu/Documents/parkinson_classification/p3_ssl_hmri/ssl_simclr_PD_R2scorr_optim_adam_lr_0.001/version_0/checkpoints/epoch=371-val_loss=tensor(0.5705, device='cuda:0').ckpt"}
+    # chckpt_paths = {'R2s_WLS1': "/mrhome/alejandrocu/Documents/parkinson_classification/p3_ssl_hmri/rs120_ssl_simclr_resnet_DA02_bs5_v2epochs400/version_0/checkpoints/epoch=326-val_loss=tensor(0.8306, device='cuda:0').ckpt",
+    #                 'MTsat': "/mrhome/alejandrocu/Documents/parkinson_classification/p3_ssl_hmri/ssl_simclr_MTsat_optim_adam_lr_0.001/version_1/checkpoints/epoch=240-val_loss=tensor(1.0347, device='cuda:0').ckpt",
+    #                 'R1': "/mrhome/alejandrocu/Documents/parkinson_classification/p3_ssl_hmri/ssl_simclr_R1_optim_adam_lr_0.001/version_0/checkpoints/epoch=351-val_loss=tensor(0.8743, device='cuda:0').ckpt",
+    #                 'PD_R2scorr': "/mrhome/alejandrocu/Documents/parkinson_classification/p3_ssl_hmri/ssl_simclr_PD_R2scorr_optim_adam_lr_0.001/version_0/checkpoints/epoch=371-val_loss=tensor(0.5705, device='cuda:0').ckpt"}
+    chckpt_paths = {'R2s_WLS1': "",
+                    'MTsat': "/mrhome/alejandrocu/Documents/parkinson_classification/p3_ssl_hmri/ssl_hmri_MTsat_optim_adam_lr_0.001/version_0/checkpoints/epoch=119-val_loss=tensor(1.0069, device='cuda:0').ckpt",
+                    'R1': "/mrhome/alejandrocu/Documents/parkinson_classification/p3_ssl_hmri/ssl_hmri_R1_optim_sgd_lr_0.01/version_0/checkpoints/epoch=319-val_loss=tensor(1.0122, device='cuda:0').ckpt",
+                    'PD_R2scorr': ""}
     
-    exps = '5B-2_hMRI'
+    exps = 'new5_hMRI'
     exc_times = []
     for optim in optimizers:
         for map_type in maps:  

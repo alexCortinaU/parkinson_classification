@@ -15,24 +15,24 @@ dataset:
   train_batch_size: 3
   val_num_workers: 2
   val_batch_size: 3
-  reshape_size:
-  - 100
-  - 130
-  - 100
+  reshape_size: 180
+  # - 100
+  # - 130
+  # - 100
   random_state: 42
   weighted_sampler: False
   windowed_dataset: True
-  masked: brainstem_masked
+  masked: brain_masked
   shuffle: True
   map_type: 
     # - MTsat
-    - R1
-    # - R2s_WLS1
+    # - R1
+    - R2s_WLS1
     # - PD_R2scorr
 
 # should match arguments in the module class
 model:
-  # net: 3dresnet
+  net: 3dresnet
   chkpt_path: /home/alejandrocu/Documents/parkinson_classification/p1_ppmi_outs/3dresnet-da01_bz10_focal_sampler/version_0/checkpoints/epoch=01-val_f1=0.7708.ckpt 
   n_classes: 2
   in_channels: 1

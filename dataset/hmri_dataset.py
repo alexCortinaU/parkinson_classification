@@ -562,7 +562,8 @@ class HMRIDataModuleDownstream(HMRIDataModule):
                 # LoadImage(),
                 EnsureChannelFirst(),
                 ScaleIntensity(minv=0, maxv=1),
-                ResizeWithPadOrCrop(self.reshape_size, mode='minimum')
+                Resize(spatial_size=(self.reshape_size, self.reshape_size, self.reshape_size), mode='trilinear'),
+                # ResizeWithPadOrCrop(self.reshape_size, mode='minimum')
             ]
         )
         return preprocess
