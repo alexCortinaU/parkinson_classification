@@ -141,18 +141,18 @@ def main():
     # set random seed for reproducibility
     pl.seed_everything(cfg['dataset']['random_state'],  workers=True)
 
-    maps = ['MTsat', 'R1'] # 'MTsat', 'R1', 'R2s_WLS1', 'PD_R2scorr'
+    maps = ['MTsat', 'R1', 'R2s_WLS1', 'PD_R2scorr'] # 'MTsat', 'R1', 'R2s_WLS1', 'PD_R2scorr'
     optimizers = ['adam'] # , 'sgd'
-    lrates = [0.01, 0.001]
+    lrates = [0.001]
     # unfreeze_at_epochs = [15]
     # chckpt_paths = {'R2s_WLS1': "/mrhome/alejandrocu/Documents/parkinson_classification/p3_ssl_hmri/rs120_ssl_simclr_resnet_DA02_bs5_v2epochs400/version_0/checkpoints/epoch=326-val_loss=tensor(0.8306, device='cuda:0').ckpt",
     #                 'MTsat': "/mrhome/alejandrocu/Documents/parkinson_classification/p3_ssl_hmri/ssl_simclr_MTsat_optim_adam_lr_0.001/version_1/checkpoints/epoch=240-val_loss=tensor(1.0347, device='cuda:0').ckpt",
     #                 'R1': "/mrhome/alejandrocu/Documents/parkinson_classification/p3_ssl_hmri/ssl_simclr_R1_optim_adam_lr_0.001/version_0/checkpoints/epoch=351-val_loss=tensor(0.8743, device='cuda:0').ckpt",
     #                 'PD_R2scorr': "/mrhome/alejandrocu/Documents/parkinson_classification/p3_ssl_hmri/ssl_simclr_PD_R2scorr_optim_adam_lr_0.001/version_0/checkpoints/epoch=371-val_loss=tensor(0.5705, device='cuda:0').ckpt"}
-    chckpt_paths = {'R2s_WLS1': "",
+    chckpt_paths = {'R2s_WLS1': "/mrhome/alejandrocu/Documents/parkinson_classification/p3_ssl_hmri/ssl_hmri_R2s_WLS1_optim_sgd_lr_0.01/version_0/checkpoints/epoch=189-val_loss=tensor(0.7293, device='cuda:0').ckpt",
                     'MTsat': "/mrhome/alejandrocu/Documents/parkinson_classification/p3_ssl_hmri/ssl_hmri_MTsat_optim_adam_lr_0.001/version_0/checkpoints/epoch=119-val_loss=tensor(1.0069, device='cuda:0').ckpt",
                     'R1': "/mrhome/alejandrocu/Documents/parkinson_classification/p3_ssl_hmri/ssl_hmri_R1_optim_sgd_lr_0.01/version_0/checkpoints/epoch=319-val_loss=tensor(1.0122, device='cuda:0').ckpt",
-                    'PD_R2scorr': ""}
+                    'PD_R2scorr': "/mrhome/alejandrocu/Documents/parkinson_classification/p3_ssl_hmri/ssl_simclr_PD_R2scorr_optim_adam_lr_0.001/version_0/checkpoints/epoch=371-val_loss=tensor(0.5705, device='cuda:0').ckpt"}
     
     exps = 'new5_hMRI'
     exc_times = []
@@ -164,7 +164,7 @@ def main():
                 cfg['model']['learning_rate'] = lr
                 cfg['model']['optimizer_class'] = optim
                 cfg['dataset']['map_type'] = [map_type]
-                cfg['exp_name'] = f'{exps}_{map_type}_optim_{optim}_lr_{lr}'
+                cfg['exp_name'] = f'{exps}_{map_type}_optim_{optim}_lr_{lr}_sch60'
 
                 exc_time, dump_path = full_train_model(cfg)   
 
