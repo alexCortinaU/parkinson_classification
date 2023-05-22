@@ -104,33 +104,31 @@ class HMRIDataModule(pl.LightningDataModule):
 
         return subjects_list, subjects_labels
 
-    def prepare_data(self, md_df_train = None, md_df_val = None):
+    def prepare_data(self, train_idxs = None, val_idxs = None):
 
 
-        if md_df_train is None and md_df_val is None:
+        # drop subject 058 because it doesn't have maps
+        # 'sub-016' has PD* map completely black
+        # sub-025 has no brain mask
+        subjs_to_drop = ['sub-058', 'sub-016']
+        # if self.brain_masked:
+        #     subjs_to_drop.append('sub-025')
+
+        for drop_id in subjs_to_drop:
+            self.md_df.drop(self.md_df[self.md_df.id == drop_id].index, inplace=True)
+        self.md_df.reset_index(drop=True, inplace=True)
+        print(f'Drop subjects {subjs_to_drop}')
+
+        if train_idxs is None and val_idxs is None:
             
-            # split ratio train = 0.6, val = 0.2, test = 0.2
-
-            # drop subject 058 because it doesn't have maps
-            # 'sub-016' has PD* map completely black
-            # sub-025 has no brain mask
-            subjs_to_drop = ['sub-058', 'sub-016']
-            # if self.brain_masked:
-            #     subjs_to_drop.append('sub-025')
-
-            for drop_id in subjs_to_drop:
-                self.md_df.drop(self.md_df[self.md_df.id == drop_id].index, inplace=True)
-            self.md_df.reset_index(drop=True, inplace=True)
-            print(f'Drop subjects {subjs_to_drop}')
-
             self.md_df_train, self.md_df_val = train_test_split(self.md_df, test_size=self.test_split, 
                                                                 random_state=42, stratify=self.md_df.loc[:, 'group'].values)
             # self.md_df_train, self.md_df_val = train_test_split(md_df_train_, test_size=0.25,
             #                                         random_state=self.random_state, stratify=md_df_train_.loc[:, 'group'].values)
         else:
-            self.md_df_train = md_df_train
-            self.md_df_val = md_df_val
-                                                    
+            self.md_df_train = self.md_df.iloc[train_idxs, :]
+            self.md_df_val = self.md_df.iloc[val_idxs, :]
+
         image_training_paths, labels_train = self.get_subjects_list(self.md_df_train)
         image_val_paths, labels_val = self.get_subjects_list(self.md_df_val)
         # image_test_paths, labels_test = self.get_subjects_list(self.md_df_test)

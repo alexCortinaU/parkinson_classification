@@ -94,6 +94,16 @@ EXP_DIR_6 = {
     }
 }
 
+EXP_DIR_4A = {
+    'R2s_WLS1': {
+        'CV0': Path('/mrhome/alejandrocu/Documents/parkinson_classification/new_p1_hmri_outs/cv2-4A_hMRI_R2s_WLS1_optim_adam_lr_0.01_cv_0/version_0/checkpoints/epoch=43-val_auroc=0.7908.ckpt'),
+        'CV1': Path('/mrhome/alejandrocu/Documents/parkinson_classification/new_p1_hmri_outs/cv2-4A_hMRI_R2s_WLS1_optim_adam_lr_0.01_cv_1/version_0/checkpoints/epoch=64-val_auroc=0.8622.ckpt'),
+        'CV2': Path('/mrhome/alejandrocu/Documents/parkinson_classification/new_p1_hmri_outs/cv2-4A_hMRI_R2s_WLS1_optim_adam_lr_0.01_cv_2/version_0/checkpoints/epoch=69-val_auroc=0.8061.ckpt'),
+        'CV3': Path('/mrhome/alejandrocu/Documents/parkinson_classification/new_p1_hmri_outs/cv2-4A_hMRI_R2s_WLS1_optim_adam_lr_0.01_cv_3/version_0/checkpoints/epoch=65-val_auroc=0.7551.ckpt'),
+        'CV4': Path('/mrhome/alejandrocu/Documents/parkinson_classification/new_p1_hmri_outs/cv2-4A_hMRI_R2s_WLS1_optim_adam_lr_0.01_cv_4/version_0/checkpoints/epoch=76-val_auroc=0.7296.ckpt')
+    }
+}
+
 EXP_DIR_5 = {
     'MTsat': {
         '5B-2': Path("/mrhome/alejandrocu/Documents/parkinson_classification/p4_downstream_outs/5B-2_hMRI_MTsat_optim_adam_lr_0.001/version_0/checkpoints/epoch=74-val_auroc=tensor(0.7602, device='cuda:0').ckpt")
@@ -207,7 +217,7 @@ def perform_inference_exp5(chkpt_path: Path, phase: str = 'val'):
     return save_df, pd.DataFrame(exp_results, index=[0])
 
 
-def perform_inference(chkpt_path: Path, phase: str = 'val'):
+def perform_inference(chkpt_path: Path, train_idxs = None, val_idxs = None, phase: str = 'val'):
     # read model from checkpoint and set up
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -244,7 +254,7 @@ def perform_inference(chkpt_path: Path, phase: str = 'val'):
                         root_dir=root_dir,
                         augment=augmentations,
                         **exp_cfg['dataset'])
-    data.prepare_data()
+    data.prepare_data(train_idxs=train_idxs, val_idxs=val_idxs)
     data.setup()
 
     dataloaders = {'val': data.val_dataloader(),
@@ -265,7 +275,7 @@ def perform_inference(chkpt_path: Path, phase: str = 'val'):
         else:
             subj_results['subj_id'] = data.md_df_train['id'][i]
 
-        inputs, targets = batch
+        inputs, targets = batch['image'][tio.DATA], batch['label']
         inputs = inputs.to(device)
         targets = targets.to(device).long()
         targets_list.append(targets)
@@ -299,6 +309,20 @@ def perform_inference(chkpt_path: Path, phase: str = 'val'):
 
     return save_df, pd.DataFrame(exp_results, index=[0])
 
+def get_indexes_from_cfg(chkpt_path):
+
+    exp_dir = chkpt_path.parent.parent.parent
+    with open(exp_dir /'config_dump.yml', 'r') as f:
+        cv_cfg = list(yaml.load_all(f, yaml.SafeLoader))[0]
+    
+    train_index = cv_cfg['train_idxs'].replace('[', '').replace(']', '').replace('\n', '').split(' ')
+    train_index = [int(i) for i in train_index if i != '']
+
+    test_index = cv_cfg['test_idxs'].replace('[', '').replace(']', '').replace('\n', '').split(' ')
+    test_index = [int(i) for i in test_index if i != '']
+
+    return train_index, test_index
+
 if __name__ == '__main__':
     phase = 'train'
     # set up experiment directory
@@ -306,19 +330,24 @@ if __name__ == '__main__':
     results_path = results_path / 'classification_results'
     results_path.mkdir(exist_ok=True, parents=True)
     # chkpt_path = Path('/mrhome/alejandrocu/Documents/parkinson_classification/new_p1_hmri_outs/3A_hMRI_MTsat_optim_adam_lr_0.01/version_0/checkpoints/epoch=69-val_auroc=0.9133.ckpt')
+    
     predictions = pd.DataFrame()
     results = pd.DataFrame()
-    for map_type, exps_paths in EXP_DIR_3.items():
+    for map_type, exps_paths in EXP_DIR_4A.items():
         for exp_name, chkpt_path in exps_paths.items():
             print(exp_name)
-            save_df, exp_results = perform_inference(chkpt_path, phase)
+            train_idxs, val_idxs = get_indexes_from_cfg(chkpt_path)
+            save_df, exp_results = perform_inference(chkpt_path=chkpt_path,
+                                                     phase=phase, 
+                                                     train_idxs=train_idxs,
+                                                     val_idxs=val_idxs)
             exp_results['exp_type'] = exp_name
             save_df['map_type'] = map_type
             save_df['exp_type'] = exp_name
             predictions = pd.concat([predictions, save_df], axis=0)
             results = pd.concat([results, exp_results], axis=0)
-    predictions.to_csv(results_path/f'3_{phase}_inference_results.csv', index=False)
-    results.to_csv(results_path/f'3_{phase}_exps_results.csv', index=False)
+    predictions.to_csv(results_path/f'CV4A_{phase}_inference_results.csv', index=False)
+    results.to_csv(results_path/f'CV4A_{phase}_exps_results.csv', index=False)
     # save_df.to_csv(exp_dir/'inference_results.csv', index=False)
     # print(save_df)
     print(results)
