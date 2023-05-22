@@ -50,7 +50,7 @@ def unprocess_image(image_path: Path, original_image_path: Path, reshape_size: i
         return None
 
     img_ornt = nib.orientations.io_orientation(image_nib.affine)
-    psr_ornt = nib.orientations.io_orientation(og_subject_proc.image.affine)
+    psr_ornt = nib.orientations.io_orientation(og_subject.image.affine)
     # Uncrop
     image_nib = inv_crop(image_nib)
     # FromCanonical
