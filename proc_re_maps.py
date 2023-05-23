@@ -204,14 +204,16 @@ def generate_recons_from_chkpt(chkpt_path, error_types):
     data_pd.setup()
 
     # obtain reconstruction and RE error maps
-    progress_bar = tqdm(range(len(data_pd.md_df)), desc='Reconstructing', total=len(data_pd.md_df), ncols=110)
+    # progress_bar = tqdm(range(len(data_pd.md_df)), desc='Reconstructing', total=len(data_pd.md_df), ncols=110)
+    progress_bar = tqdm(range(len(data_hc.md_df_val)), desc='Reconstructing', total=len(data_hc.md_df_val), ncols=110)
+
     for i in progress_bar:
     # for i in range(len(data_pd.md_df)):
-        subject_idx = data_pd.md_df.iloc[i]['id']
+        subject_idx = data_hc.md_df_val.iloc[i]['id']
         for p, error_type in enumerate(error_types):
             re_map, rec_img, subj_img = get_re_map(i, 
                                                 model, 
-                                                data_pd,
+                                                data_hc,
                                                 ae_type=ae_type,
                                                 error_type=error_type,
                                                 device=device)
