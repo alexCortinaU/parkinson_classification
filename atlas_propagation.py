@@ -73,7 +73,7 @@ def reg(subj: str,
                             grad_step = grad_step
                             )
     reg_time = datetime.now() - start
-    # print(f'finished registration subj {subj} in time: {reg_time}')
+    print(f'finished registration subj {subj} in time: {reg_time}')
     save_dict = {'fwdtransforms': mytx['fwdtransforms'],
                 'invtransforms': mytx['invtransforms'],
                 'transform_type': transform_type,
