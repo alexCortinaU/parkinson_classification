@@ -1,0 +1,5 @@
+auroc_sm,auroc_log,acc,f1,exp_name,split,map_type,exp_type
+0.7602041,0.7602041,0.64285713,0.7826087,5B-2_hMRI_MTsat_optim_adam_lr_0.001,val,MTsat,5B-2
+0.7602041,0.74489796,0.64285713,0.7826087,5B-2_hMRI_R1_optim_adam_lr_0.001,val,R1,5B-2
+0.7602041,0.7653061,0.64285713,0.7826087,5B-2_hMRI_R2s_WLS1_optim_adam_lr_0.001,val,R2s_WLS1,5B-2
+0.71938777,0.6836735,0.64285713,0.7826087,5B-2_hMRI_PD_R2scorr_optim_adam_lr_0.001,val,PD_R2scorr,5B-2
