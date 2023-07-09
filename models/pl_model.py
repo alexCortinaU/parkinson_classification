@@ -78,7 +78,7 @@ class ComputeRE(Callback):
             input_imgs = self.input_imgs.to(pl_module.device)
             with torch.no_grad():
                 pl_module.eval()
-                if self.ae_type == 'vae':
+                if self.ae_type == 'svae':
                     reconst_imgs, _, _, _ = pl_module(input_imgs)
                 elif self.ae_type == 'vqvae':
                     reconst_imgs, _ = pl_module(input_imgs)
@@ -489,7 +489,7 @@ class GenerateReconstructions(Callback):
             input_imgs = self.input_imgs.to(pl_module.device)
             with torch.no_grad():
                 pl_module.eval()
-                if self.ae_type == 'vae':
+                if self.ae_type == 'svae':
                     reconst_imgs, _, _, _ = pl_module(input_imgs)
                 elif self.ae_type == 'vqvae':
                     reconst_imgs, _ = pl_module(input_imgs)

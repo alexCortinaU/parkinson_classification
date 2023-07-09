@@ -299,15 +299,21 @@ class HMRIControlsDataModule(pl.LightningDataModule):
 
         return subjects_list
     
-    def prepare_data(self):
+    def prepare_data(self, md_df_train = None, md_df_val = None):
 
-        # Reset index        
-        self.md_df.reset_index(drop=True, inplace=True)
+        if md_df_train is None:
 
-        # Split dataset into train and val, stratified by sex
-        self.md_df_train, self.md_df_val = train_test_split(self.md_df, test_size=self.test_split,
-                                                random_state=self.random_state, stratify=self.md_df.loc[:, 'sex'].values)
-                                                
+            # Reset index        
+            self.md_df.reset_index(drop=True, inplace=True)
+
+            # Split dataset into train and val, stratified by sex
+            self.md_df_train, self.md_df_val = train_test_split(self.md_df, test_size=self.test_split,
+                                                    random_state=self.random_state, stratify=self.md_df.loc[:, 'sex'].values)
+
+        else:
+            self.md_df_train = md_df_train
+            self.md_df_val = md_df_val
+                                                        
         image_training_paths = self.get_subjects_list(self.md_df_train)
         image_val_paths = self.get_subjects_list(self.md_df_val)
 
