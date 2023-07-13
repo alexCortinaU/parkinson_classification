@@ -23,6 +23,20 @@ from dataset.ppmi_dataset import PPMIDataModule
 from dataset.hmri_dataset import HMRIDataModule
 from models.pl_model import Model
 
+def get_indexes_from_cfg(chkpt_path):
+
+    exp_dir = chkpt_path.parent.parent.parent
+    with open(exp_dir /'config_dump.yml', 'r') as f:
+        cv_cfg = list(yaml.load_all(f, yaml.SafeLoader))[0]
+    
+    train_index = cv_cfg['train_idxs'].replace('[', '').replace(']', '').replace('\n', '').split(' ')
+    train_index = [int(i) for i in train_index if i != '']
+
+    test_index = cv_cfg['test_idxs'].replace('[', '').replace(']', '').replace('\n', '').split(' ')
+    test_index = [int(i) for i in test_index if i != '']
+
+    return train_index, test_index
+
 def unprocess_image(image_path: Path, original_image_path: Path, reshape_size: int = 180):
 
     """Reverse torchio preprocessing 
@@ -62,20 +76,6 @@ def unprocess_image(image_path: Path, original_image_path: Path, reshape_size: i
     else:
         print('Failed: Affine mismatch')
         return None
-    
-def get_indexes_from_cfg(chkpt_path):
-
-    exp_dir = chkpt_path.parent.parent.parent
-    with open(exp_dir /'config_dump.yml', 'r') as f:
-        cv_cfg = list(yaml.load_all(f, yaml.SafeLoader))[0]
-    
-    train_index = cv_cfg['train_idxs'].replace('[', '').replace(']', '').replace('\n', '').split(' ')
-    train_index = [int(i) for i in train_index if i != '']
-
-    test_index = cv_cfg['test_idxs'].replace('[', '').replace(']', '').replace('\n', '').split(' ')
-    test_index = [int(i) for i in test_index if i != '']
-
-    return train_index, test_index
 
 def save_nifti_from_array(arr: np.ndarray,                           
                           subj_id: str,
