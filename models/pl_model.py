@@ -21,7 +21,35 @@ from models.medicalnet.setting import get_def_args
 from pytorch_lightning.callbacks import Callback
 import torchvision
 from models.svae import spatialVAE
-from monai.losses import ContrastiveLoss
+from monai.networks.layers import Act
+from GenerativeModels.generative.networks.nets import VQVAE
+
+# class ReconstructionError(torchmetrics.Metric):
+#     def __init__(self, maps: list, **kwargs):
+#         super().__init__()
+#         for map in maps:
+#             self.add_state(map, default=torch.tensor(0), dist_reduce_fx="sum")
+
+#     def update(self, x: torch.Tensor, x_hat: torch.Tensor):
+#         preds, target = self._input_format(x, x_hat)
+#         assert preds.shape == target.shape
+
+#         self.correct += torch.sum(preds == target)
+#         self.total += target.numel()
+
+#     def compute(self):
+#         return self.correct.float() / self.total
+#     # Set to True if the metric is differentiable else set to False
+#     is_differentiable: Optional[bool] = None
+
+#     # Set to True if the metric reaches it optimal value when the metric is maximized.
+#     # Set to False if it when the metric is minimized.
+#     higher_is_better: Optional[bool] = True
+
+#     # Set to True if the metric during 'update' requires access to the global metric
+#     # state for its calculations. If not, setting this to False indicates that all
+#     # batch states are independent and we will optimize the runtime of 'forward'
+#     full_state_update: bool = True
 
 class ComputeRE(Callback):
     def __init__(self,
@@ -31,7 +59,7 @@ class ComputeRE(Callback):
                  subject,
                  every_n_epochs=1,
                  cohort="control",
-                 vae=False):
+                 ae_type='vae'):
         super().__init__()
         self.input_imgs = input_imgs  # Images to reconstruct during training
         # Only save those images every N epochs (otherwise tensorboard gets quite large)
@@ -39,7 +67,7 @@ class ComputeRE(Callback):
         self.sampler = sampler
         self.every_n_epochs = every_n_epochs
         self.cohort = cohort
-        self.vae = vae
+        self.ae_type = ae_type
         self.aggregator = tio.data.GridAggregator(sampler)
         self.og_img = subject['image'][tio.DATA]
 
@@ -50,8 +78,10 @@ class ComputeRE(Callback):
             input_imgs = self.input_imgs.to(pl_module.device)
             with torch.no_grad():
                 pl_module.eval()
-                if self.vae:
+                if self.ae_type == 'svae':
                     reconst_imgs, _, _, _ = pl_module(input_imgs)
+                elif self.ae_type == 'vqvae':
+                    reconst_imgs, _ = pl_module(input_imgs)
                 else:
                     reconst_imgs = pl_module(input_imgs)
                 pl_module.train()
@@ -64,6 +94,7 @@ class ComputeRE(Callback):
             diff = [torch.pow(self.og_img[i] - reconstructed[i], 2) for i in range(self.og_img.shape[0])]
             rerror = torch.sqrt(torch.sum(torch.stack(diff), dim=0))
             trainer.logger.experiment.add_scalar(f"RE {self.cohort}", torch.mean(rerror), global_step=trainer.global_step)
+
 class LossL1KLD(nn.Module):
 
     def __init__(self, gamma: float = 0.9):
@@ -81,7 +112,18 @@ class LossL1KLD(nn.Module):
 
         return loss
 
-def get_criterions(name: str, gamma: float = 0.9, alpha: float = 0.5):
+class LossVQVAE(nn.Module):
+    def __init__(self):
+        super(LossVQVAE, self).__init__()
+        self.l1criterion = nn.L1Loss(reduction='mean')
+
+    def forward(self, x_hat: torch.Tensor, x: torch.Tensor, quantization_loss: torch.Tensor):
+        l1 = self.l1criterion(x_hat, x)
+        # VQVAE loss
+        loss = l1/10000 + quantization_loss
+        return l1 #loss
+    
+def get_criterions(name: str, gamma: float = 0.9):
 
     if name == 'cross_entropy':
         return nn.CrossEntropyLoss()
@@ -90,7 +132,7 @@ def get_criterions(name: str, gamma: float = 0.9, alpha: float = 0.5):
     elif name == 'bin_cross_entropy':
         return nn.BCEWithLogitsLoss()
     elif name == 'focal':
-        return losses.BinaryFocalLossWithLogits(alpha=alpha, reduction='mean')
+        return losses.BinaryFocalLossWithLogits(0.5)
     elif name == 'tversky':
         return losses.TverskyLoss(0.4, 0.4)
     
@@ -101,14 +143,14 @@ def get_criterions(name: str, gamma: float = 0.9, alpha: float = 0.5):
         return nn.MSELoss()
     elif name == 'l1kld':
         return LossL1KLD(gamma=gamma)
+    elif name == 'vqvaeloss':
+        return LossVQVAE()
     else:
         raise ValueError(f'Unknown loss name: {name}')
 
 def get_optimizer(name: str):
     if name == 'adam':
         return optim.Adam
-    if name == 'adamw':
-        return optim.AdamW
     if name == 'sgd':
         return optim.SGD
     if name == 'rmsprop':
@@ -117,7 +159,6 @@ def get_optimizer(name: str):
         raise ValueError(f'Unknown loss name: {name}')
 
 def get_monai_net(name: str, in_channels: int = 1, n_classes: int = 2):
-
     if name == 'densenet':
         return monai.networks.nets.DenseNet121(spatial_dims=3, 
                                                 in_channels=in_channels, 
@@ -137,7 +178,6 @@ def get_monai_net(name: str, in_channels: int = 1, n_classes: int = 2):
                                             num_classes=n_classes,
                                             block_inplanes=[64, 128, 256, 512],
                                             pretrained=True)
-    
 def get_3dresnet(n_classes: int = 2):
     args = get_def_args()
     model, _ = generate_model(args) 
@@ -148,11 +188,6 @@ def get_3dresnet(n_classes: int = 2):
                                 # the last Conv3d layer has out_channels = 512
                                 nn.Linear(512, n_classes)
                                 )
-    for m in model.conv_seg.modules():
-        if isinstance(m, nn.Linear):
-            nn.init.xavier_uniform_(m.weight)
-            nn.init.constant_(m.bias, 0)
-
     return model
 
 def get_autoencoder(net, 
@@ -216,15 +251,31 @@ def get_autoencoder(net,
         
         return net
 
+    elif net == 'vqvae':
+        net = VQVAE(
+                spatial_dims=3,
+                in_channels=1,
+                out_channels=1,
+                num_res_layers=2,
+                downsample_parameters=((2, 3, 1, 1), (2, 3, 1, 1)),
+                upsample_parameters=((2, 3, 1, 1, 1), (2, 3, 1, 1, 1)),
+                num_channels=channels, #(96, 96),
+                num_res_channels=channels, #,
+                num_embeddings=latent_size, # 256,
+                embedding_dim=32,
+                act='LEAKYRELU'
+                )
+
+        return net
+
+
 class Model(pl.LightningModule):
     def __init__(self,
-                    net='3dresnet',                  
-                    loss='focal',
-                    learning_rate=0.001, 
-                    optimizer_class='adam',
-                    group_params=False,
+                    net,                  
+                    loss,
+                    learning_rate, 
+                    optimizer_class,
                     gamma=0.9,
-                    alpha=0.5,
                     chkpt_path=None, 
                     n_classes = 2, 
                     in_channels = 1, 
@@ -234,8 +285,7 @@ class Model(pl.LightningModule):
         super().__init__()
         self.lr = learning_rate
         self.loss = loss
-        self.criterion = get_criterions(loss, gamma=gamma, alpha=alpha)
-        self.group_params = group_params
+        self.criterion = get_criterions(loss, gamma=gamma)
         self.optimizer_class = get_optimizer(optimizer_class)
         self.chkpt_path = chkpt_path
         self.sch_patience = sch_patience
@@ -254,42 +304,23 @@ class Model(pl.LightningModule):
         else:   
             if net == '3dresnet':
                 self.net = get_3dresnet(n_classes)
-                print('Pretrained 3D resnet has a single input channel')
-            elif net == None:
+                # print('Pretrained 3D resnet has a single input channel')
+            if net == None:
                 self.net = None
-                # print('debugging this this')
             else:
                 self.net = get_monai_net(net, in_channels, n_classes)
             
     def configure_optimizers(self):
-
-        params = list(self.named_parameters())
-        def is_head(n): return 'conv_seg' in n
-
-        # set different learning rates for the last layer
-        if self.group_params:
-            group_parameters = [{'params': [p for n, p in params if is_head(n)], 'lr': self.lr * 10},
-                                {'params': [p for n, p in params if not is_head(n)], 'lr': self.lr}]
-            parameters = group_parameters
-        else:
-            parameters = self.parameters()
-        
-        # set optimizer
         if self.optimizer_class == optim.Adam:
-            optimizer = self.optimizer_class(parameters, 
-                                             lr=self.lr, 
-                                             weight_decay=self.weight_decay)
-        elif self.optimizer_class == optim.AdamW:
-            optimizer = self.optimizer_class(parameters, 
+            optimizer = self.optimizer_class(self.parameters(), 
                                              lr=self.lr, 
                                              weight_decay=self.weight_decay)
         else:
-            optimizer = self.optimizer_class(parameters, 
+            optimizer = self.optimizer_class(self.parameters(), 
                                              lr=self.lr, 
                                              momentum=self.momentum, 
                                              weight_decay=self.weight_decay)
         
-        # set learning rate scheduler
         if self.sch_patience > 0:
             sch = ReduceLROnPlateau(optimizer, 'min',
                                     factor=0.1, patience=self.sch_patience)
@@ -394,19 +425,29 @@ class Model_AE(Model):
         loss = self.criterion(x_hat, x, mu, logvar)
         # loss = self.criterion(x_hat, x)
         return x, x_hat, loss
+    
+    def vqvae_step(self, batch):
+        x = batch['image'][tio.DATA]
+        x_hat, quant_loss = self.net(images=x)
+        loss = self.criterion(x_hat, x, quant_loss)
+        return x, x_hat, loss, quant_loss
 
     def training_step(self, batch, batch_idx):
         
         if self.loss == "l1kld":
             x, x_hat, loss = self.vae_step(batch)
+        elif self.loss == "vqvaeloss":
+            x, x_hat, loss, quant_loss = self.vqvae_step(batch)
+            batch_size = len(x)  
+            self.log("train_quant_loss", quant_loss, on_step=False, on_epoch=True, prog_bar=True, logger=True, batch_size=batch_size)
         else:
             x_hat, x = self.infer_batch(batch)                      
             loss = self.criterion(x_hat, x).mean()
 
-        batch_size = len(x)  
-        self.log("train_loss", loss, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
+        batch_size = len(x)            
+        self.log("train_loss", loss, on_step=False, on_epoch=True, prog_bar=True, logger=True, batch_size=batch_size)
         self.train_mse(x_hat, x)
-        self.log("train_mse", self.train_mse, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
+        self.log("train_mse", self.train_mse, on_step=False, on_epoch=True, prog_bar=True, logger=True, batch_size=batch_size)
            
         return loss
 
@@ -414,6 +455,10 @@ class Model_AE(Model):
 
         if self.loss == "l1kld":
             x, x_hat, loss = self.vae_step(batch)
+        elif self.loss == "vqvaeloss":
+            x, x_hat, loss, quant_loss = self.vqvae_step(batch)
+            batch_size = len(x)  
+            self.log("val_quant_loss", quant_loss, on_step=False, on_epoch=True, prog_bar=True, logger=True, batch_size=batch_size)
         else:
             x_hat, x = self.infer_batch(batch)          
             loss = self.criterion(x_hat, x).mean()
@@ -428,15 +473,15 @@ class Model_AE(Model):
     def forward(self, x):
         return self.net(x)
 
-class GenerateReconstructions(Callback):
 
-    def __init__(self, input_imgs, every_n_epochs=1, split="train", vae=False):
+class GenerateReconstructions(Callback):
+    def __init__(self, input_imgs, every_n_epochs=1, split="train", ae_type='vae'):
         super().__init__()
         self.input_imgs = input_imgs  # Images to reconstruct during training
         # Only save those images every N epochs (otherwise tensorboard gets quite large)
         self.every_n_epochs = every_n_epochs
         self.split = split
-        self.vae = vae
+        self.ae_type = ae_type
 
     def on_train_epoch_end(self, trainer, pl_module):
         if trainer.current_epoch % self.every_n_epochs == 0:
@@ -444,8 +489,10 @@ class GenerateReconstructions(Callback):
             input_imgs = self.input_imgs.to(pl_module.device)
             with torch.no_grad():
                 pl_module.eval()
-                if self.vae:
+                if self.ae_type == 'svae':
                     reconst_imgs, _, _, _ = pl_module(input_imgs)
+                elif self.ae_type == 'vqvae':
+                    reconst_imgs, _ = pl_module(input_imgs)
                 else:
                     reconst_imgs = pl_module(input_imgs)
                 pl_module.train()
@@ -454,314 +501,3 @@ class GenerateReconstructions(Callback):
             imgs = torch.stack([input_imgs[..., slice].detach(), reconst_imgs[..., slice].detach()], dim=1).flatten(0, 1)
             grid = torchvision.utils.make_grid(imgs, nrow=2, normalize=True, range=(-1, 1))
             trainer.logger.experiment.add_image(f"Reconstructions {self.split}", grid, global_step=trainer.global_step)
-
-# Contrastive Learning and Downstream Tasks
-
-def get_net(net):
-    if net == 'resnet_monai':
-        net = monai.networks.nets.ResNet('basic', layers=[1, 1, 1, 1], block_inplanes=[64, 128, 256, 512],
-                                    spatial_dims=3, n_input_channels=1, num_classes=2)
-    return net
-
-class SimCLR(nn.Module):
-    """
-    We opt for simplicity and adopt the commonly used ResNet (He et al., 2016) to obtain hi = f(x ̃i) = ResNet(x ̃i) where hi ∈ Rd is the output after the average pooling layer.
-    """
-
-    def __init__(self, encoder, projection_dim):
-        super(SimCLR, self).__init__()
-
-        self.encoder = encoder
-        self.n_features = self.encoder.fc.in_features
-
-        # Replace the fc layer with an Identity function
-        self.encoder.fc = nn.Identity()
-
-        # We use a MLP with one hidden layer to obtain z_i = g(h_i) = W(2)σ(W(1)h_i) where σ is a ReLU non-linearity.
-        self.projector = nn.Sequential(
-            nn.Linear(self.n_features, self.n_features, bias=False),
-            nn.ReLU(),
-            nn.Linear(self.n_features, projection_dim, bias=False),
-        )
-
-    def forward(self, x_i, x_j):
-        h_i = self.encoder(x_i)
-        h_j = self.encoder(x_j)
-
-        z_i = self.projector(h_i)
-        z_j = self.projector(h_j)
-        return h_i, h_j, z_i, z_j
-
-class ContrastiveLearning(pl.LightningModule):
-
-    def __init__(self, hpdict):
-        
-        super().__init__()
-
-        self.hpdict = hpdict
-
-        # initialize ResNet
-        # self.encoder = get_net(self.hpdict['model']['net'])
-        # self.n_features = self.encoder.fc.in_features  # get dimensions of fc layer
-        self.model = SimCLR(get_net(self.hpdict['model']['net']), self.hpdict['model']['projection_dim'])
-        self.criterion = ContrastiveLoss(self.hpdict['model']['temperature'])
-
-    def forward(self, x_i, x_j):
-        h_i, h_j, z_i, z_j = self.model(x_i, x_j)
-        loss = self.criterion(z_i, z_j)
-        return loss
-
-    def training_step(self, batch, batch_idx):
-        # training_step defined the train loop. It is independent of forward
-        x_i, x_j = batch
-        loss = self.forward(x_i, x_j)
-        self.log("train_loss", 
-                 loss, on_step=False, 
-                 on_epoch=True,
-                 prog_bar=True, 
-                 logger=True, 
-                 batch_size=self.hpdict['dataset']['train_batch_size'])
-        return loss
-    
-    def validation_step(self, batch, batch_idx):
-        # training_step defined the train loop. It is independent of forward
-        x_i, x_j = batch
-        loss = self.forward(x_i, x_j)
-        self.log("val_loss", 
-                 loss, on_step=False, 
-                 on_epoch=True,
-                 prog_bar=True, 
-                 logger=True, 
-                 batch_size=self.hpdict['dataset']['train_batch_size'])
-        return loss
-
-    def configure_criterion(self):
-        # criterion = NT_Xent(self.hpdict['dataset']['batch_size'], self.hpdict['model']['temperature'])
-        criterion = ContrastiveLoss(temperature=self.hpdict['model']['temperature'])
-        return criterion
-
-    def configure_optimizers(self):
-        scheduler = None
-        if self.hpdict['model']['optimizer_class'] == "adam":
-            optimizer = torch.optim.Adam(self.model.parameters(), lr=self.hpdict['model']['learning_rate'])
-                    # "decay the learning rate with the cosine decay schedule without restarts"
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                optimizer, self.hpdict['pl_trainer']['max_epochs'], eta_min=0, last_epoch=-1
-            )
-        else:
-            raise NotImplementedError
-
-        if scheduler:
-            return {"optimizer": optimizer, "lr_scheduler": scheduler}
-        else:
-            return {"optimizer": optimizer}
-
-class ClassifierSimCLR(nn.Module):
-    def __init__(self, net, num_classes):
-        super().__init__()
-
-        n_features = net.projector[0].in_features
-        self.feature_extractor = nn.Sequential(*list(net.children())[:-1])
-
-        self.classifier = nn.Sequential(
-                            nn.Dropout(0.5),
-                            nn.Linear(n_features, 256),
-                            nn.ReLU(),
-                            nn.Linear(256, 2)
-                        )
-        
-        for m in self.classifier.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.xavier_uniform_(m.weight)
-                nn.init.constant_(m.bias, 0)
-
-    def forward(self, x):
-        x = self.feature_extractor(x)
-        x = self.classifier(x)
-        return x
-    
-class ModelDownstream(Model):
-    def __init__(self, 
-                 net=None,
-                 **kwargs):
-        super().__init__(net=net, **kwargs)
-
-        # self.save_hyperparameters(ignore=['net'])
-
-        n_features = self.net.projector[0].in_features
-        layers = list(self.net.children())[:-1]
-        self.feature_extractor = nn.Sequential(*layers)
-
-        self.classifier = nn.Sequential(
-                            nn.Dropout(0.5),
-                            nn.Linear(n_features, 256),
-                            nn.ReLU(),
-                            nn.Linear(256, 2)
-                        )
-
-        for m in self.classifier.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.xavier_uniform_(m.weight)
-                nn.init.constant_(m.bias, 0)
-
-    def configure_optimizers(self):
-        # # set optimizer
-        # if self.optimizer_class == optim.Adam:
-        #     optimizer = self.optimizer_class(filter(lambda p: p.requires_grad, self.parameters()), 
-        #                                      lr=self.lr, 
-        #                                      weight_decay=self.weight_decay)
-        # else:
-        #     optimizer = self.optimizer_class(filter(lambda p: p.requires_grad, self.parameters()), 
-        #                                      lr=self.lr, 
-        #                                      momentum=self.momentum, 
-        #                                      weight_decay=self.weight_decay)
-        
-        # # set learning rate scheduler
-        # if self.sch_patience > 0:
-        #     sch = ReduceLROnPlateau(optimizer, 'min',
-        #                             factor=0.1, patience=self.sch_patience)
-        #     #learning rate scheduler
-        #     return {"optimizer": optimizer,
-        #             "lr_scheduler": {"scheduler": sch,
-        #                             "monitor":"val_loss"}}
-        # else:
-        #     return optimizer
-
-        params = list(self.named_parameters())
-        def is_head(n): return 'classifier' in n
-
-        # set different learning rates for the last layer
-        if self.group_params:
-            group_parameters = [{'params': [p for n, p in params if is_head(n)], 'lr': self.lr * 10},
-                                {'params': [p for n, p in params if not is_head(n)], 'lr': self.lr}]
-            parameters = group_parameters
-        else:
-            parameters = self.parameters()
-        
-        # set optimizer
-        if self.optimizer_class == optim.Adam:
-            optimizer = self.optimizer_class(parameters, 
-                                             lr=self.lr, 
-                                             weight_decay=self.weight_decay)
-        elif self.optimizer_class == optim.AdamW:
-            optimizer = self.optimizer_class(parameters, 
-                                             lr=self.lr, 
-                                             weight_decay=self.weight_decay)
-        else:
-            optimizer = self.optimizer_class(parameters, 
-                                             lr=self.lr, 
-                                             momentum=self.momentum, 
-                                             weight_decay=self.weight_decay)
-        
-        # set learning rate scheduler
-        if self.sch_patience > 0:
-            sch = ReduceLROnPlateau(optimizer, 'min',
-                                    factor=0.1, patience=self.sch_patience)
-            #learning rate scheduler
-            return {"optimizer": optimizer,
-                    "lr_scheduler": {"scheduler": sch,
-                                    "monitor":"val_loss"}}
-        else:
-            return optimizer
-        
-    def forward(self, x):
-            x = self.feature_extractor(x)
-            y_hat = self.classifier(x)
-            return y_hat
-
-    def training_step(self, batch, batch_idx):
-            x, y = batch
-            batch_size = len(y)
-            y_hat = self.forward(x)
-            loss = self.criterion(y_hat, y)
-            self.log("train_loss", loss, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
-            self.train_acc(y_hat, y)
-            self.train_auroc(y_hat, y)
-            self.train_f1(y_hat, y)
-            self.log("train_acc", self.train_acc, on_step=False, on_epoch=True ,prog_bar=False, logger=True, batch_size=batch_size)
-            self.log("train_auroc", self.train_auroc, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
-            self.log("train_f1", self.train_f1, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
-            
-            return loss
-    
-    def validation_step(self, batch, batch_idx):
-        x, y = batch
-        batch_size = len(y)
-        y_hat = self.forward(x)
-        loss = self.criterion(y_hat, y)
-        self.log("val_loss", loss, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
-        self.val_acc(y_hat, y)
-        self.val_auroc(y_hat, y)
-        self.val_f1(y_hat, y)
-        self.log("val_acc", self.val_acc, on_step=False, on_epoch=True ,prog_bar=False, logger=True, batch_size=batch_size)
-        self.log("val_auroc", self.val_auroc, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
-        self.log("val_f1", self.val_f1, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
-        return loss
-
-# class ModelDownstream(Model):
-#     def __init__(self, 
-#                  get_encoder=None,
-#                  net=None,
-#                  **kwargs):
-#         super().__init__(net=net, **kwargs)
-
-#         self.save_hyperparameters(ignore=['net'])
-#         if get_encoder is not None:
-#             self.feature_extractor, n_features = get_encoder(self.net)
-#         else:
-#             n_features = self.net.projector[0].in_features
-#             layers = list(self.net.children())[:-1]
-#             self.feature_extractor = nn.Sequential(*layers)
-        
-#         # self.classifier = nn.Linear(n_features, 2)
-#         # nn.init.xavier_uniform_(self.classifier.weight)
-#         # nn.init.zeros_(self.classifier.bias)
-
-#         self.classifier = nn.Sequential(
-#                             nn.Dropout(0.5),
-#                             nn.Linear(n_features, 256),
-#                             nn.ReLU(),
-#                             nn.Linear(256, 2)
-#                         )
-
-#         for m in self.classifier.modules():
-#             if isinstance(m, nn.Linear):
-#                 nn.init.xavier_uniform_(m.weight)
-#                 nn.init.constant_(m.bias, 0)
-    
-#     def forward(self, x):
-#         self.feature_extractor.eval()
-#         with torch.no_grad():
-#             representations = self.feature_extractor(x)
-#         y_hat = self.classifier(representations)
-#         return y_hat
-    
-#     def training_step(self, batch, batch_idx):
-#         x, y = batch
-#         batch_size = len(y)
-#         y_hat = self.forward(x)
-#         loss = self.criterion(y_hat, y)
-#         self.log("train_loss", loss, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
-#         self.train_acc(y_hat, y)
-#         self.train_auroc(y_hat, y)
-#         self.train_f1(y_hat, y)
-#         self.log("train_acc", self.train_acc, on_step=False, on_epoch=True ,prog_bar=False, logger=True, batch_size=batch_size)
-#         self.log("train_auroc", self.train_auroc, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
-#         self.log("train_f1", self.train_f1, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
-           
-#         return loss
-    
-#     def validation_step(self, batch, batch_idx):
-#         x, y = batch
-#         batch_size = len(y)
-#         y_hat = self.forward(x)
-#         loss = self.criterion(y_hat, y)
-#         self.log("val_loss", loss, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
-#         self.val_acc(y_hat, y)
-#         self.val_auroc(y_hat, y)
-#         self.val_f1(y_hat, y)
-#         self.log("val_acc", self.val_acc, on_step=False, on_epoch=True ,prog_bar=False, logger=True, batch_size=batch_size)
-#         self.log("val_auroc", self.val_auroc, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
-#         self.log("val_f1", self.val_f1, on_step=False, on_epoch=True ,prog_bar=True, logger=True, batch_size=batch_size)
-#         return loss
-

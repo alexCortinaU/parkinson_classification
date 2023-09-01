@@ -24,6 +24,7 @@ from monai.transforms import (
     OneOf,
     EnsureChannelFirst, Compose, RandRotate90, Resize, ScaleIntensity
 )
+pd.set_option('mode.chained_assignment', None)
 
 class HMRIDataModule(pl.LightningDataModule):
     def __init__(self, 
@@ -232,7 +233,7 @@ class HMRIControlsDataModule(pl.LightningDataModule):
                 test_split = 0.3, 
                 random_state = 42,
                 windowed_dataset = False,
-                brain_masked = False,
+                masked = 'brain_masked',
                 augment = None,
                 shuffle = True):
         super().__init__()
@@ -250,7 +251,7 @@ class HMRIControlsDataModule(pl.LightningDataModule):
         self.test_split = test_split
         self.random_state = random_state
         self.windowed_dataset = windowed_dataset
-        self.brain_masked = brain_masked
+        self.masked = masked
         self.augment = augment
         self.shuffle = shuffle
         self.subjects = None
@@ -267,32 +268,52 @@ class HMRIControlsDataModule(pl.LightningDataModule):
         subjects_list = []
   
         md_df.reset_index(inplace=True, drop=True)
-        for i in range(len(md_df)):
-            subj_dir = self.root_dir / md_df['id'][i] / 'Results'
-            if self.windowed_dataset:
-                if self.brain_masked:
-                    hmri_files = sorted(list(subj_dir.glob('*w_masked.nii')), key=lambda x: x.stem)
-                else:
-                    hmri_files = sorted(list(subj_dir.glob('*_w.nii')), key=lambda x: x.stem)
-            else:
-                hmri_files = sorted(list(subj_dir.glob('*.nii')), key=lambda x: x.stem)
-                hmri_files = [file for file in hmri_files if '_w' not in file.stem]
 
+        for i in range(len(md_df)):
+
+            # select the correct folder of masked volumes
+            subj_dir = self.root_dir / md_df['id'][i] / 'Results' / self.masked
+            subj_dir.exists()
+            # get all windowed nifti volumes
+            hmri_files = sorted(list(subj_dir.glob('*_w.nii')), key=lambda x: x.stem)
+
+            # get only maps of interest
             hmri_files = [x for x in hmri_files if any(sub in x.stem for sub in self.map_type)]
+
             subjects_list.append(hmri_files)
+
+        # for i in range(len(md_df)):
+        #     subj_dir = self.root_dir / md_df['id'][i] / 'Results'
+        #     if self.windowed_dataset:
+        #         if self.brain_masked:
+        #             hmri_files = sorted(list(subj_dir.glob('*w_masked.nii')), key=lambda x: x.stem)
+        #         else:
+        #             hmri_files = sorted(list(subj_dir.glob('*_w.nii')), key=lambda x: x.stem)
+        #     else:
+        #         hmri_files = sorted(list(subj_dir.glob('*.nii')), key=lambda x: x.stem)
+        #         hmri_files = [file for file in hmri_files if '_w' not in file.stem]
+
+        #     hmri_files = [x for x in hmri_files if any(sub in x.stem for sub in self.map_type)]
+        #     subjects_list.append(hmri_files)
 
 
         return subjects_list
     
-    def prepare_data(self):
+    def prepare_data(self, md_df_train = None, md_df_val = None):
 
-        # Reset index        
-        self.md_df.reset_index(drop=True, inplace=True)
+        if md_df_train is None:
 
-        # Split dataset into train and val, stratified by sex
-        self.md_df_train, self.md_df_val = train_test_split(self.md_df, test_size=self.test_split,
-                                                random_state=self.random_state, stratify=self.md_df.loc[:, 'sex'].values)
-                                                
+            # Reset index        
+            self.md_df.reset_index(drop=True, inplace=True)
+
+            # Split dataset into train and val, stratified by sex
+            self.md_df_train, self.md_df_val = train_test_split(self.md_df, test_size=self.test_split,
+                                                    random_state=self.random_state, stratify=self.md_df.loc[:, 'sex'].values)
+
+        else:
+            self.md_df_train = md_df_train
+            self.md_df_val = md_df_val
+                                                        
         image_training_paths = self.get_subjects_list(self.md_df_train)
         image_val_paths = self.get_subjects_list(self.md_df_val)
 
@@ -309,14 +330,7 @@ class HMRIControlsDataModule(pl.LightningDataModule):
             self.val_subjects.append(subject)
 
     def get_preprocessing_transform(self):
-        # Rescales intensities to [0, 1] and adds a channel dimension,
-        # then resizes to the desired shape
-
-        # preprocess = Compose(
-        #     [ScaleIntensity(), 
-        #     EnsureChannelFirst(), 
-        #     ResizeWithPadOrCrop(self.reshape_size)
-        #     ])
+        
         preprocess = tio.Compose(
             [   tio.ToCanonical(),
                 tio.RescaleIntensity((0, 1)),
@@ -421,7 +435,7 @@ class HMRIPDDataModule(HMRIControlsDataModule):
                 test_split = 0.3,
                 random_state = 42,
                 windowed_dataset = False,
-                brain_masked = False,
+                masked = False,
                 augment = None,
                 shuffle = True):
         super().__init__(md_df, 
@@ -438,21 +452,23 @@ class HMRIPDDataModule(HMRIControlsDataModule):
                         test_split = test_split, 
                         random_state = random_state,
                         windowed_dataset = windowed_dataset,
-                        brain_masked = brain_masked,
+                        masked = masked,
                         augment = augment,
                         shuffle = shuffle)
 
     def prepare_data(self):
 
+        # drop subject 058 because it doesn't have maps
+        # 'sub-016' has PD* map completely black
+        # sub-025 has no brain mask
         subjs_to_drop = ['sub-058', 'sub-016']
-        if self.brain_masked:
-            subjs_to_drop.append('sub-025')
-        for drop_id in subjs_to_drop: # 'sub-016'
+        # if self.brain_masked:
+        #     subjs_to_drop.append('sub-025')
+
+        for drop_id in subjs_to_drop:
             self.md_df.drop(self.md_df[self.md_df.id == drop_id].index, inplace=True)
-        
-        # Reset index        
         self.md_df.reset_index(drop=True, inplace=True)
-        print(f'Drop subjects {subjs_to_drop}')
+        # print(f'Drop subjects {subjs_to_drop}')
         
                                        
         image_paths = self.get_subjects_list(self.md_df)
@@ -486,7 +502,7 @@ class HMRIPDDataModule(HMRIControlsDataModule):
                             num_workers=0,
                             shuffle=False)
     
-    def get_grid(self, subj=0, overlap=0, patch_size=None):
+    def get_grid(self, subj=0, overlap=0, patch_size=None, mode='train'):
         # get patches from single subject (subj)
         # for inference (reconstruction) purposes
         
