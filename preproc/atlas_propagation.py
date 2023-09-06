@@ -23,22 +23,26 @@ def reg(subj: str,
         grad_step: float = 0.1
         ):
     
-    # full pipe loop
-    md_df = pd.read_csv('/mrhome/alejandrocu/Documents/parkinson_classification/bids_3t.csv')
+    """Performes desired registration (spatial normalization) for a selected subject. 
+    It performs the registration of the PD25 atlas to the subject's qMRI map. 
+    It also saves the warped images and the final propagated atlas.
+    For parameters of the registration function see https://antspyx.readthedocs.io/en/latest/registration.html
 
-    subj_ids = md_df['id'].values
-    subj_ids = np.delete(subj_ids, np.where(subj_ids == 'sub-058'))
+    Args:
+        subj (str): Subject id as in the BIDS dataset (sub-xxx)
+        qmri_map (str): Either 'R1' or 'R2s'
+        pd25_temp (str): Either 'T1' or 'R2s'
+        transform_type (str, optional): According to ANTsPy registration function . Defaults to 'SyNRA'.
+        syn_metric (str, optional): According to ANTsPy registration function. Defaults to 'CC'.
+        aff_metric (str, optional): According to ANTsPy registration function. Defaults to 'GC'.
+        reg_iterations (tuple, optional): According to ANTsPy registration function. Defaults to (100, 70, 50, 20).
+        shrink_factors (tuple, optional): According to ANTsPy registration function. Defaults to (8, 4 , 2, 1).
+        smooth_sigmas (tuple, optional): According to ANTsPy registration function. Defaults to (3, 2, 1, 0).
+        grad_step (float, optional): According to ANTsPy registration function. Defaults to 0.1.
 
-        
-    # qmri_map = 'R2s'
-    # pd25_temp = 'R2s'
-    # transform_type = 'antsRegistrationSyNQuick[s]' # antsRegistrationSyNQuick[s], SyN, SyNRA
-    # syn_metric = 'CC' # CC, mattes
-    # aff_metric = 'GC'
-    # reg_iterations = (100, 70, 50, 20)
-    # shrink_factors = (8, 4 , 2, 1)
-    # smooth_sigmas = (3, 2, 1, 0)
-    # grad_step = 0.1
+    Returns:
+        _type_: Time of execution
+    """
     exp_name = f'{pd25_temp}_{qmri_map}_{transform_type}_{syn_metric}' # {transform_type}
     print(f'exp_name: {exp_name}')
 
