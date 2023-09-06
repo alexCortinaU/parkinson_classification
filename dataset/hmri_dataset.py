@@ -87,19 +87,6 @@ class HMRIDataModule(pl.LightningDataModule):
             subjects_list.append(hmri_files)
             subjects_labels.append(md_df['group'][i])
 
-            # else:
-            #     subj_dir = self.root_dir / md_df['id'][i] / 'Results'
-            #     if self.windowed_dataset:
-            #         if self.brain_masked:
-            #             hmri_files = sorted(list(subj_dir.glob('*w_masked.nii')), key=lambda x: x.stem)
-            #         else:
-            #             hmri_files = sorted(list(subj_dir.glob('*_w.nii')), key=lambda x: x.stem)
-            #     else:
-            #         hmri_files = sorted(list(subj_dir.glob('*.nii')), key=lambda x: x.stem)
-            #         hmri_files = [file for file in hmri_files if '_w' not in file.stem]
-            #     subjects_list.append(hmri_files)
-            #     subjects_labels.append(md_df.iloc[i, -1])
-
         return subjects_list, subjects_labels
 
     def prepare_data(self):
@@ -120,12 +107,9 @@ class HMRIDataModule(pl.LightningDataModule):
 
         self.md_df_train, self.md_df_val = train_test_split(self.md_df, test_size=self.test_split, 
                                                             random_state=42, stratify=self.md_df.loc[:, 'group'].values)
-        # self.md_df_train, self.md_df_val = train_test_split(md_df_train_, test_size=0.25,
-        #                                         random_state=self.random_state, stratify=md_df_train_.loc[:, 'group'].values)
-                                                
+                                      
         image_training_paths, labels_train = self.get_subjects_list(self.md_df_train)
         image_val_paths, labels_val = self.get_subjects_list(self.md_df_val)
-        # image_test_paths, labels_test = self.get_subjects_list(self.md_df_test)
 
         self.train_subjects = []
         for image_path, label in zip(image_training_paths, labels_train):
@@ -138,11 +122,6 @@ class HMRIDataModule(pl.LightningDataModule):
             # 'image' and 'label' are arbitrary names for the images
             subject = tio.Subject(image=tio.ScalarImage(image_path), label=nn.functional.one_hot(as_tensor(label), num_classes=2).float())
             self.val_subjects.append(subject)
-
-        # self.test_subjects = []
-        # for image_path, label in zip(image_test_paths, labels_test):
-        #     subject = tio.Subject(image=tio.ScalarImage(image_path), label=nn.functional.one_hot(as_tensor(label), num_classes=2).float())
-        #     self.test_subjects.append(subject)
 
     def get_preprocessing_transform(self):
 
@@ -176,7 +155,6 @@ class HMRIDataModule(pl.LightningDataModule):
 
         self.train_set = tio.SubjectsDataset(self.train_subjects, transform=self.transform)
         self.val_set = tio.SubjectsDataset(self.val_subjects, transform=self.preprocess)
-        # self.test_set = tio.SubjectsDataset(self.test_subjects, transform=self.preprocess)
 
     def train_dataloader(self):
 
@@ -204,12 +182,6 @@ class HMRIDataModule(pl.LightningDataModule):
                             batch_size=self.val_batch_size, 
                             num_workers=self.val_num_workers,
                             shuffle=False)
-
-    # def test_dataloader(self):
-    #     return DataLoader(self.test_set, 
-    #                         self.val_batch_size, 
-    #                         num_workers=self.val_num_workers,
-    #                         shuffle=False)
 
     def predict_dataloader(self):
         return DataLoader(self.val_set, 
@@ -281,21 +253,6 @@ class HMRIControlsDataModule(pl.LightningDataModule):
             hmri_files = [x for x in hmri_files if any(sub in x.stem for sub in self.map_type)]
 
             subjects_list.append(hmri_files)
-
-        # for i in range(len(md_df)):
-        #     subj_dir = self.root_dir / md_df['id'][i] / 'Results'
-        #     if self.windowed_dataset:
-        #         if self.brain_masked:
-        #             hmri_files = sorted(list(subj_dir.glob('*w_masked.nii')), key=lambda x: x.stem)
-        #         else:
-        #             hmri_files = sorted(list(subj_dir.glob('*_w.nii')), key=lambda x: x.stem)
-        #     else:
-        #         hmri_files = sorted(list(subj_dir.glob('*.nii')), key=lambda x: x.stem)
-        #         hmri_files = [file for file in hmri_files if '_w' not in file.stem]
-
-        #     hmri_files = [x for x in hmri_files if any(sub in x.stem for sub in self.map_type)]
-        #     subjects_list.append(hmri_files)
-
 
         return subjects_list
     
