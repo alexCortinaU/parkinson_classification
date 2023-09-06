@@ -1,6 +1,20 @@
 # own
 outputs/
-
+models/medicalnet/pretrain/
+lightning_logs/
+p1_ppmi_outs/
+p1_hmri_outs/
+new_p1_hmri_outs/
+occ_sens/
+p2_hmri_outs/
+p3_ssl_hmri/
+p4_downstream_outs/
+reconstructionsx/
+GenerativeModels/
+comparison/
+p6_hmri_outs/
+xai_outs/
+vqvae_models/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

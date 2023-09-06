@@ -1,0 +1,52 @@
+pl_trainer:
+  max_epochs: 250
+  devices:
+  - 0
+  accelerator: gpu
+  precision: 16
+  log_every_n_steps: 5
+
+training:
+  early_stopping:  False
+  monitor_ckpt: val_loss # val_acc, val_f1, val_auroc
+  display_recons: True
+
+dataset:
+  train_num_workers: 4
+  train_batch_size: 32
+  val_num_workers: 4
+  val_batch_size: 32
+  reshape_size: 180
+  patch_size: 128
+  map_type: 
+    # - MTsat
+    - R1
+    # - R2s_WLS1
+    # - PD_R2scorr
+  queue_length: 128
+  samples_per_volume: 9
+  random_state: 42
+  windowed_dataset: True
+  brain_masked: True
+  shuffle: True
+
+# should match arguments in the module class
+model:
+  net: svae # vae, svae, vqvae, autoencoder
+  channels:
+    - 32
+    - 64
+    - 128
+    # - 256
+    # - 512
+  latent_size: 128
+  in_channels: 1
+  loss: l1kld # l1, mse, l1kld
+  gamma: 0.9
+  optimizer_class: adam # sgd, adam, rmsprop
+  learning_rate: 0.001
+  sch_patience: -1
+  momentum: 0 # 0.9  
+  weight_decay: 0 # 0.0001    
+
+exp_name: 4svaeR1-da00_bz32_l1kld_adam_lr0.001_ps128

@@ -1,0 +1,45 @@
+pl_trainer:
+  max_epochs: 150
+  devices:
+  - 0
+  accelerator: gpu
+  precision: 16
+  log_every_n_steps: 5
+
+training:
+  early_stopping:  True
+  monitor_ckpt: val_auroc # val_acc, val_f1, val_auroc
+
+dataset:
+  train_num_workers: 2
+  train_batch_size: 3
+  val_num_workers: 2
+  val_batch_size: 3
+  reshape_size: 180
+  random_state: 42
+  weighted_sampler: False
+  windowed_dataset: True
+  masked: brain_masked # brainstem_masked
+  shuffle: True
+  map_type: 
+    # - MTsat
+    - R1
+    # - R2s_WLS1
+    # - PD_R2scorr
+
+# should match arguments in the module class
+model:
+  net: 3dresnet
+  chkpt_path: /home/alejandrocu/Documents/parkinson_classification/p1_ppmi_outs/3dresnet-da01_bz10_focal_sampler/version_0/checkpoints/epoch=01-val_f1=0.7708.ckpt 
+  n_classes: 2
+  in_channels: 1
+  loss: focal # dice, cross_entropy, bin_cross_entropy, focal, tversky
+  alpha: 0.35
+  optimizer_class: sgd # sgd, adam, rmsprop, adamw
+  group_params: True # set different LR for classfier (fc layers, i.e. conv_seg)
+  learning_rate: 0.001
+  sch_patience: 50
+  momentum: 0 # 0.9  
+  weight_decay: 0.0001 # 0.0001    
+
+exp_name: brainhmri3dresnet-da02_bz3_focal_adam_lr0.001-v4
